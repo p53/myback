@@ -18,18 +18,47 @@ sub backup() {
 
     if( !( defined $params{'bkpType'} && defined $params{'user'} && defined $params{'port'} && defined $params{'pass'} ) ) {
         croak "You need to specify type, user, port, pass!";
-    }
+    } # if
 
     $self->{'bkpType'} = $self->getType(%params);
 
     $self->{'bkpType'}->backup(%params);
     
-}
+} # end sub backup
 
 sub restore() {
+
     my $self = shift;
-    $self->{'bkpType'}->restore();
-}
+    my %params = @_;
+    my $uuid = $params{'uuid'};
+
+    my $backupsInfo = $self->getBackupsInfo();
+
+    if( !defined( $backupsInfo->{$uuid} ) ) {
+        croak "No backups with uuid $uuid!";
+    } # if
+
+    if( $backupsInfo->{$uuid}->{'incremental'} eq 'Y' ) {
+        $self->{'bkpType'} = $self->getType(
+                                            'bkpType' => 'incremental',
+                                            'bkpDir' => $self->{'bkpDir'}, 
+                                            'host' => $self->{'host'},
+                                            'hostBkpDir' => $self->{'hostBkpDir'}
+                                        );
+    } else {
+        $self->{'bkpType'} = $self->getType(
+                                            'bkpType' => 'full',
+                                            'bkpDir' => $self->{'bkpDir'}, 
+                                            'host' => $self->{'host'},
+                                            'hostBkpDir' => $self->{'hostBkpDir'}
+                                        );
+    } # if
+    
+    $params{'backupsInfo'} = $backupsInfo;
+
+    $self->{'bkpType'}->restore(%params);
+
+} # end sub restore
 
 sub dump() {
     my $self = shift;
@@ -42,8 +71,23 @@ sub list() {
     my %params = @_;
     my $format = $params{'format'};
 
+    # getting information about backups
+    my $backupsInfo = $self->getBackupsInfo();
+
+    # sorting backup info according backup start time
+    my @sortedBkpsInfo = sort { $a->{'start_unix_time'} <=> $b->{'start_unix_time'} } values %$backupsInfo;
+
+    $self->$format('data' => \@sortedBkpsInfo);
+
+} # end sub list
+
+sub getBackupsInfo() {
+
+    my $self = shift;
+    my %params = @_;
+
     my $hostBkpDir = $self->{'hostBkpDir'};
-    my @backupsInfo = ();
+    my %backupsInfo = ();
 
     # getting files with lsn number from all backups in host backup directory 
     my @sources = <$hostBkpDir/*/xtrabackup_info>;
@@ -57,6 +101,10 @@ sub list() {
         $fh->close();
 
         my $backupInfo = {};
+        my $uuid = '';
+
+        $file =~ /(.*)\/.*$/;
+        $backupInfo->{'bkpDir'} = $1;
 
         # parsing file
         for my $line(@lines) {
@@ -82,20 +130,21 @@ sub list() {
 
                 } # if
 
+                if( $prop eq 'uuid' ) {
+                    $uuid = $propVal;
+                } # if
+
             } # if
 
         } # for
 
-        push(@backupsInfo, $backupInfo);
+        $backupsInfo{$uuid} = $backupInfo;
  
     } # for
 
-    # sorting backup info according backup start time
-    my @sortedBkpsInfo = sort { $a->{'start_unix_time'} <=> $b->{'start_unix_time'} } @backupsInfo;
+    return \%backupsInfo;
 
-    $self->$format('data' => \@sortedBkpsInfo);
-
-} # end sub list
+} # end sub getBackupsInfo
 
 sub getType() {
 

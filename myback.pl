@@ -78,7 +78,7 @@ pod2usage(1) if !$dir;
 pod2usage(1) if !$host;
 
 pod2usage(-verbose => 3) if !defined( $allowedActions->{$action} );
-pod2usage(1) if ( $action eq 'restore' && !($dir && $host && $id) );
+pod2usage(1) if ( $action eq 'restore' && !($dir && $host && $id && $location) );
 pod2usage(1) if ( $action eq 'list' && !($dir && $host && $format) );
 pod2usage(1) if ( $action eq 'list' && !defined( $allowedFormats->{$format} ) );
 
@@ -104,7 +104,7 @@ my %params = (
     "location" => $location,
     "dbname" => $dbname,
     "bkpType" => $type,
-    "id" => $id,
+    "uuid" => $id,
     "hostBkpDir" => $hostBkpDir,
     "format" => $format
 );
