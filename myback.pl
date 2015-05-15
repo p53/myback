@@ -28,13 +28,13 @@ my $host = '';
 my $user = '';
 my $port = 0;
 my $pass = '';
-my $date = '';
 my $location = '';
 my $dbname = '';
 my $config = '';
 my $type = '';
 my $id = '';
 my $format = '';
+my $socket = '';
 
 my $allowedTypes = {
                         'incremental' => 1,
@@ -45,7 +45,9 @@ my $allowedActions = {
                         'backup' => 1,
                         'restore' => 1,
                         'dump' => 1,
-                        'list' => 1
+                        'list' => 1,
+                        'rmt_backup' => 1,
+                        'list_rmt' => 1
                     };
 
 my $allowedFormats = {
@@ -63,12 +65,12 @@ GetOptions(
                 'user|u:s' => \$user,
                 'port|p:i' => \$port,
                 'pass|s:s' => \$pass,
-                'date|t:s' => \$date,
                 'loc|l:s' => \$location,
                 'id|i:s' => \$id,
                 'dbname|n:s' => \$dbname,
                 'config|c:s' => \$config,
                 'format|f:s' => \$format,
+                'socket|o:s' => \$socket,
                 'help!' => \$help
         ) or pod2usage(-verbose => 3);
 
@@ -79,18 +81,20 @@ pod2usage(1) if !$host;
 
 pod2usage(-verbose => 3) if !defined( $allowedActions->{$action} );
 pod2usage(1) if ( $action eq 'restore' && !($dir && $host && $id && $location) );
-pod2usage(1) if ( $action eq 'list' && !($dir && $host && $format) );
+pod2usage(1) if ( $action eq 'list' && !($dir && $host && $format && $user && $pass) );
 pod2usage(1) if ( $action eq 'list' && !defined( $allowedFormats->{$format} ) );
 
 pod2usage(1) if ( $action eq 'backup' && !defined( $allowedTypes->{$type} ) );
 
-if( $action eq 'backup' && !($dir && $type && $host && $user && $port && $pass) ) {
+if( $action eq 'backup' && !($dir && $type && $host && $user && $pass) ) {
     pod2usage(1);
-}
+} # if
 
-if( $action eq 'dump' && !($dir && $date && $location && $dbname && $host) ) {
+if( $action eq 'dump' && !($dir && $location && $dbname && $host) ) {
     pod2usage(1);
-}
+} # if
+
+pod2usage(1) if ( $action eq 'rmt_backup' && !($dir && $host && $type) );
 
 my $hostBkpDir = $dir . "/" . $host;
 
@@ -100,19 +104,22 @@ my %params = (
     "user" => $user,
     "port" => $port,
     "pass" => $pass,
-    "date" => DateTime->now,
     "location" => $location,
     "dbname" => $dbname,
     "bkpType" => $type,
     "uuid" => $id,
     "hostBkpDir" => $hostBkpDir,
-    "format" => $format
+    "format" => $format,
+    "socket" => $socket
 );
 
 my $backupObj = Backup::Backup->new(
                                     'bkpDir' => $dir, 
                                     'host' => $host,
-                                    'hostBkpDir' => $hostBkpDir
+                                    'hostBkpDir' => $hostBkpDir,
+                                    'user' => $user,
+                                    'pass' => $pass,
+                                    'socket' => $socket
                                 );
 
 $backupObj->$action(%params);
@@ -128,7 +135,7 @@ __END__
 
         myback [--help] [--action|-a] action [--dir|-d] path [--host|-h] database_host 
                 [--type|-t] backup_type [--user|-u] database_user [--port|-p] database_port
-                [--pass|-s] password [--date|-t] date_of_backup [--loc|-l] location_of_mysql_dir
+                [--pass|-s] password [--loc|-l] location_of_mysql_dir
                 [--id|-i] id_of_backup [--dbname|-n] database_name [--config|-c] config_path
 
 =head1 DESCRIPTION

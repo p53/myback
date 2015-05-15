@@ -9,9 +9,8 @@ use autodie;
 use File::Glob;
 use File::Copy;
 use File::Path;
-use File::Copy::Recursive;
-use Archive::Tar;
 use DBI;
+use YAML::Tiny;
 
 use Term::Shell;
 
@@ -23,8 +22,8 @@ sub backup() {
     my %params = @_;
 
     # checking if all needed parameters present
-    if( !( defined $params{'user'} && defined $params{'port'} && defined $params{'pass'} ) ) {
-        croak "You need to specify user, port, pass!";
+    if( !( defined $params{'user'} && defined $params{'pass'} ) ) {
+        croak "You need to specify user, pass!";
     } # if
 
     if( ! -d $self->{'hostBkpDir'} ) {
@@ -48,6 +47,7 @@ sub backup() {
     $bkpCmd .= " --history --stream=xbstream --host=" . $self->{'host'};
     $bkpCmd .= " --password=" . $self->{'pass'} . " --incremental-force-scan";
     $bkpCmd .= " --incremental-history-uuid=" . $lastBkpInfo->{'uuid'};
+    $bkpCmd .= " --socket=" . $self->{'socket'};
     $bkpCmd .= " " . $self->{'hostBkpDir'};
     $bkpCmd .= "|bzip2 > " . $bkpFileName;
 
@@ -55,6 +55,48 @@ sub backup() {
     my $result = $shell->execCmd('cmd' => $bkpCmd, 'cmdsNeeded' => [ 'innobackupex', 'bzip2' ]);
 
     $shell->fatal($result);
+
+    $lastBkpInfo = $self->getLastBkpInfo();
+
+    my $uuidFileName = $bkpDir . "/" . $lastBkpInfo->{'uuid'} . ".xb.bz2";
+    my $uuidConfFile = $bkpDir . "/" . $lastBkpInfo->{'uuid'} . ".yaml";
+
+    move($bkpFileName, $uuidFileName);
+
+    $lastBkpInfo->{'start_time'} =~ /(\d{4})-(\d{2})-(\d{2})\s(\d{2})\:(\d{2})\:(\d{2})/;
+
+    my $startDt = DateTime->new(
+        'year' => $1,
+        'month' => $2,
+        'day' => $3,
+        'hour' => $4,
+        'minute' => $5,
+        'second' => $6,
+        'time_zone' => 'local'
+    );
+
+    $startDt->set_time_zone('UTC');
+
+    $lastBkpInfo->{'start_time'} = $startDt->ymd('-') . ' ' . $startDt->hms(':');
+
+    $lastBkpInfo->{'end_time'} =~ /(\d{4})-(\d{2})-(\d{2})\s(\d{2})\:(\d{2})\:(\d{2})/;
+
+    my $endDt = DateTime->new(
+        'year' => $1,
+        'month' => $2,
+        'day' => $3,
+        'hour' => $4,
+        'minute' => $5,
+        'second' => $6,
+        'time_zone' => 'local'
+    );
+
+    $endDt->set_time_zone('UTC');
+
+    $lastBkpInfo->{'end_time'} = $endDt->ymd('-') . ' ' . $endDt->hms(':');
+
+    my $yaml = YAML::Tiny->new($lastBkpInfo);
+    $yaml->write($uuidConfFile);
 
 } # end sub backup
 
@@ -85,16 +127,18 @@ sub restore() {
 
     mkdir $restoreLocation;
 
-    try{
-        File::Copy::Recursive::dircopy($fullBkp->{'bkpDir'}, $restoreLocation);
-    } catch {
-        remove_tree($restoreLocation);
-        croak "Failed copying dir " . $fullBkp->{'bkpDir'} . "!";
-    };
-
-    my $restoreFullCmd = "innobackupex --apply-log --redo-only " . $restoreLocation;
+    my @files = glob($self->{'hostBkpDir'} . "/*/" . $fullBkp->{'uuid'} . ".xb.bz2");
+    my $bkpFile = $files[0];
 
     my $shell = Term::Shell->new();
+
+    my $decompCmd = "bzip2 -c -d " . $bkpFile . "|xbstream -x -C " . $restoreLocation;
+
+    $result = $shell->execCmd('cmd' => $decompCmd, 'cmdsNeeded' => [ 'bzip2', 'xbstream' ]);
+
+    $shell->fatal($result);
+
+    my $restoreFullCmd = "innobackupex --apply-log --redo-only " . $restoreLocation;
 
     try{
         $result = $shell->execCmd('cmd' => $restoreFullCmd, 'cmdsNeeded' => [ 'innobackupex' ]);
@@ -107,7 +151,11 @@ sub restore() {
 
     for my $prevBkp(@revChain) {
 
-        $restoreIncrCmd .= $prevBkp->{'bkpDir'};
+        my @files = glob($self->{'hostBkpDir'} . "/*/" . $prevBkp->{'uuid'} . ".xb.bz2");
+        my $bkpFile = $files[0];
+        $bkpFile =~ /(.*)\/(.*)$/;
+
+        $restoreIncrCmd .= $1;
 
         try{
             $result = $shell->execCmd('cmd' => $restoreIncrCmd, 'cmdsNeeded' => [ 'innobackupex' ]);
@@ -119,7 +167,12 @@ sub restore() {
     } # for
 
     my $lastIncrCmd = "innobackupex --apply-log " . $restoreLocation . " --incremental-dir=";
-    $lastIncrCmd .= $currentBkp->{'bkpDir'};
+
+    @files = glob($self->{'hostBkpDir'} . "/*/" . $currentBkp->{'uuid'} . ".xb.bz2");
+    $bkpFile = $files[0];
+    $bkpFile =~ /(.*)\/(.*)$/;
+
+    $lastIncrCmd .= $1;
 
     try{
         $result = $shell->execCmd('cmd' => $lastIncrCmd, 'cmdsNeeded' => [ 'innobackupex' ]);
@@ -138,44 +191,12 @@ sub restore() {
     }; # try
 
     unlink glob("$restoreLocation/xtrabackup_*");
-    unlink glob("$restoreLocation/*.qp");
     unlink "$restoreLocation/backup-my.cnf";
 
 } # end sub restore
 
 sub dump() {
 }
-
-sub getLastBkpInfo() {
-
-    my $self = shift;
-    my %params = @_;
-    my $hostBkpDir = $params{'hostBkpDir'};
-    my $info = {};
-
-    my $dbh = DBI->connect(
-                            "DBI:mysql:database=PERCONA_SCHEMA;host=localhost",
-                            $self->{'user'}, 
-                            $self->{'pass'},
-                            {'RaiseError' => 1}
-                        );
-
-    my $query = "SELECT * FROM PERCONA_SCHEMA.xtrabackup_history";
-    $query .= " ORDER BY innodb_to_lsn DESC, start_time DESC LIMIT 1";
-
-    my $sth = $dbh->prepare($query);
-    $sth->execute();
-
-    while (my $ref = $sth->fetchrow_hashref) {
-        $info = $ref;
-    } # while
-
-    $sth->finish;
-    $dbh->disconnect();
-
-    return $info; 
-
-} # end sub getLastBackup
 
 sub getBackupChain() {
 

@@ -8,6 +8,7 @@ use warnings;
 use autodie;
 use POSIX;
 use Text::SimpleTable;
+use DBI;
 
 with 'Backup::BackupInterface';
 
@@ -16,8 +17,8 @@ sub backup() {
     my $self = shift;
     my %params = @_;
 
-    if( !( defined $params{'bkpType'} && defined $params{'user'} && defined $params{'port'} && defined $params{'pass'} ) ) {
-        croak "You need to specify type, user, port, pass!";
+    if( !( defined $params{'bkpType'} && defined $params{'user'} && defined $params{'pass'} ) ) {
+        croak "You need to specify type, user, pass!";
     } # if
 
     $self->{'bkpType'} = $self->getType(%params);
@@ -26,13 +27,32 @@ sub backup() {
     
 } # end sub backup
 
+sub rmt_backup() {
+
+    my $self = shift;
+    my %params = @_;
+
+    if( !( defined $params{'bkpType'} && defined $params{'user'} && defined $params{'pass'} ) ) {
+        croak "You need to specify type, user, pass!";
+    } # if
+
+    $self->{'bkpType'} = $self->getType(%params);
+
+    $self->{'bkpType'}->rmt_backup(%params);
+
+} # end sub rmt_backup
+
 sub restore() {
 
     my $self = shift;
     my %params = @_;
     my $uuid = $params{'uuid'};
+    my $backupsInfo = {};
+    my $allBackups = $self->getBackupsInfo();
 
-    my $backupsInfo = $self->getBackupsInfo();
+    for my $bkp(@$allBackups) {
+        $backupsInfo->{$bkp->{'uuid'}} = $bkp;
+    } # for
 
     if( !defined( $backupsInfo->{$uuid} ) ) {
         croak "No backups with uuid $uuid!";
@@ -43,14 +63,20 @@ sub restore() {
                                             'bkpType' => 'incremental',
                                             'bkpDir' => $self->{'bkpDir'}, 
                                             'host' => $self->{'host'},
-                                            'hostBkpDir' => $self->{'hostBkpDir'}
+                                            'hostBkpDir' => $self->{'hostBkpDir'},
+                                            'user' => $self->{'user'},
+                                            'pass' => $self->{'pass'},
+                                            'socket' => $self->{'socket'}
                                         );
     } else {
         $self->{'bkpType'} = $self->getType(
                                             'bkpType' => 'full',
                                             'bkpDir' => $self->{'bkpDir'}, 
                                             'host' => $self->{'host'},
-                                            'hostBkpDir' => $self->{'hostBkpDir'}
+                                            'hostBkpDir' => $self->{'hostBkpDir'},
+                                            'user' => $self->{'user'},
+                                            'pass' => $self->{'pass'},
+                                            'socket' => $self->{'socket'}
                                         );
     } # if
     
@@ -72,79 +98,107 @@ sub list() {
     my $format = $params{'format'};
 
     # getting information about backups
-    my $backupsInfo = $self->getBackupsInfo();
-
-    # sorting backup info according backup start time
-    my @sortedBkpsInfo = sort { $a->{'start_unix_time'} <=> $b->{'start_unix_time'} } values %$backupsInfo;
-
-    $self->$format('data' => \@sortedBkpsInfo);
+    my $data = $self->getBackupsInfo();
+    
+    $self->$format('data' => $data);
 
 } # end sub list
+
+sub list_rmt() {
+
+    my $self = shift;
+    my %params = @_;
+    my $format = $params{'format'};
+
+    # getting information about backups
+    my $data = $self->getRmtBackupsInfo();
+    
+    $format .= '_rmt';
+    $self->$format('data' => $data);
+
+} # end sub list_rmt
 
 sub getBackupsInfo() {
 
     my $self = shift;
     my %params = @_;
 
-    my $hostBkpDir = $self->{'hostBkpDir'};
-    my %backupsInfo = ();
+    my @backupsInfo = ();
 
-    # getting files with lsn number from all backups in host backup directory 
-    my @sources = <$hostBkpDir/*/xtrabackup_info>;
+    my $dbh = DBI->connect(
+                            "DBI:mysql:database=PERCONA_SCHEMA;host=localhost;mysql_socket=" . $self->{'socket'},
+                            $self->{'user'}, 
+                            $self->{'pass'},
+                            {'RaiseError' => 1}
+                        );
 
-    # collecting backups info
-    for my $file(@sources) {
+    my $query = "SELECT * FROM PERCONA_SCHEMA.xtrabackup_history";
+    $query .= " ORDER BY innodb_to_lsn ASC, start_time ASC";
 
-        my $fh = IO::File->new();
-        $fh->open("< $file");
-        my @lines = <$fh>;
-        $fh->close();
+    @backupsInfo = @{ $dbh->selectall_arrayref($query, { Slice => {} }) };
 
-        my $backupInfo = {};
-        my $uuid = '';
+    $dbh->disconnect();
 
-        $file =~ /(.*)\/.*$/;
-        $backupInfo->{'bkpDir'} = $1;
-
-        # parsing file
-        for my $line(@lines) {
-
-            if( $line =~ /([a-zA-Z0-9\_]+)\s+=\s+(.*)$/ ) {
-
-                my $prop = $1;
-                my $propVal = $2;
-
-                $backupInfo->{$prop} = $propVal;
-
-                # we need to convert date to timestamp, to order results
-                # according timestamp
-                if( $prop eq 'start_time' ) {
-
-                    my $date = $propVal;
-                    my @dateParts = split(" ", $date);
-                    my ($year, $month, $day) = split("-", $dateParts[0]);
-                    my ($hour, $minute, $sec) = split(":", $dateParts[1]);
-                    my $unixTime = mktime($sec, $minute, $hour, $day, $month, $year, 0, 0);
-
-                    $backupInfo->{'start_unix_time'} = $unixTime;
-
-                } # if
-
-                if( $prop eq 'uuid' ) {
-                    $uuid = $propVal;
-                } # if
-
-            } # if
-
-        } # for
-
-        $backupsInfo{$uuid} = $backupInfo;
- 
-    } # for
-
-    return \%backupsInfo;
+    return \@backupsInfo;
 
 } # end sub getBackupsInfo
+
+sub getRmtBackupsInfo() {
+
+    my $self = shift;
+    my %params = @_;
+
+    my @backupsInfo = ();
+
+    my $dbh = DBI->connect(
+                            "dbi:SQLite:dbname=" . $self->{'bkpDb'},
+                            "", 
+                            "",
+                            {'RaiseError' => 1}
+                        );
+
+    my $query = "SELECT * FROM host JOIN bkpconf JOIN history";
+    $query .= " ON host.host_id=bkpconf.host_id";
+    $query .= " AND bkpconf.bkpconf_id=history.bkpconf_id";
+
+    @backupsInfo = @{ $dbh->selectall_arrayref($query, { Slice => {} }) };
+
+    $dbh->disconnect();
+
+    return \@backupsInfo;
+
+} # end sub getRmtBackupsInfo
+
+sub findBkpBy() {
+
+    my $self = shift;
+    my %params = @_;
+    my $info = ();
+    my $cond = '';
+
+    my $dbh = DBI->connect(
+                        "DBI:mysql:database=PERCONA_SCHEMA;host=localhost;mysql_socket=" . $self->{'socket'},
+                        $self->{'user'}, 
+                        $self->{'pass'},
+                        {'RaiseError' => 1}
+                    );
+                    
+    for my $key(keys %params) {
+        $cond .= " " . $key . '=' . $params{$key} . " AND";
+    } # for
+
+    $cond =~ s/(.*)AND$/$1/;
+
+    my $query = "SELECT * FROM PERCONA_SCHEMA.xtrabackup_history";
+    $query .= " WHERE " . $cond;
+
+    my @backupsInfo = @{ $dbh->selectall_arrayref($query, { Slice => {} }) };
+
+    $dbh->disconnect();
+
+    return $backupsInfo[0];
+
+} # end sub findBkpBy
 
 sub getType() {
 
@@ -228,6 +282,52 @@ sub lst() {
     } # for
 
     print $bkpTbl->draw;
+
+} # end sub lst
+
+sub tbl_rmt() {
+
+    my $self = shift;
+    my %params = @_;
+    my $data = $params{'data'};
+
+    my $bkpTbl = Text::SimpleTable->new(
+                                        [19, 'host_name'],
+                                        [19, 'alias'],
+                                        [19, 'start_time'],
+                                        [36, 'uuid'],
+                                        [16, 'end_lsn'],
+                                        [1, 'p'],
+                                        [1, 'i'],
+                                        [1, 't' ],
+                                        [1, 'c' ]
+                                    );
+    
+    for my $info(@$data) {
+        $bkpTbl->row(
+                        $info->{'host_name'},
+                        $info->{'alias'},
+                        $info->{'start_time'},
+                        $info->{'uuid'},
+                        $info->{'innodb_to_lsn'},
+                        $info->{'partial'},
+                        $info->{'incremental'},
+                        $info->{'compact'},
+                        $info->{'compressed'}
+                    );
+        $bkpTbl->hr;
+    } # for
+
+    print $bkpTbl->draw;
+
+} # end sub tbl_rmt
+
+sub lst_rmt() {
+
+    my $self = shift;
+    my %params = @_;
+    
+    $self->lst(%params);
 
 } # end sub lst
 
