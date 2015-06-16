@@ -9,94 +9,84 @@ use autodie;
 use File::Glob;
 use File::Copy;
 use File::Path;
+use Data::Dumper;
 use DBI;
 use YAML::Tiny;
 
 use Term::Shell;
 
-with 'Backup::BackupInterface';
+with 'Backup::BackupInterface', 'MooseX::Log::Log4perl';;
 
 sub backup() {
 
     my $self = shift;
     my %params = @_;
-
+    my $compSuffix = $self->{'compressions'}->{$self->{'compression'}};
+    my $compUtil = $self->{'compression'};
+    
     # checking if all needed parameters present
     if( !( defined $params{'user'} && defined $params{'pass'} ) ) {
+        $self->log->error("You need to specify user, pass!");
         croak "You need to specify user, pass!";
     } # if
 
     if( ! -d $self->{'hostBkpDir'} ) {
+        $self->log->error("$self->{'hostBkpDir'} does not exist, incremental backup needs previous backup!");
         croak "$self->{'hostBkpDir'} does not exist, incremental backup needs previous backup!";
     } # if
 
     my $lastBkpInfo = $self->getLastBkpInfo();
 
+    $self->log('debug')->debug("Dumping last backup info before backup: ", sub { Dumper($lastBkpInfo) });
+
     my $dateTime = DateTime->now();
     my $now = $dateTime->ymd('-') . 'T' . $dateTime->hms('-');
     my $bkpDir = $self->{'hostBkpDir'} . "/" . $now;
 
+    $self->log('base')->info("Creating backup directory for local backup:", $bkpDir);
+
     mkpath($bkpDir) if ! -d $bkpDir;
 
-    my $bkpFileName = $bkpDir . "/" . $now . ".xb.bz2";
+    my $bkpFileName = $bkpDir . "/" . $now . ".xb." . $compSuffix;
 
     # preparing and executing tool incremental command
     # incremental-force-scan is requisite because backup without scan is
     # implemented only by percona mysql version
     my $bkpCmd = "innobackupex --incremental --user=" . $self->{'user'};
     $bkpCmd .= " --history --stream=xbstream --host=" . $self->{'host'};
-    $bkpCmd .= " --password=" . $self->{'pass'} . " --incremental-force-scan";
+    $bkpCmd .= " --password='$self->{'pass'}' --incremental-force-scan";
     $bkpCmd .= " --incremental-history-uuid=" . $lastBkpInfo->{'uuid'};
     $bkpCmd .= " --socket=" . $self->{'socket'};
     $bkpCmd .= " " . $self->{'hostBkpDir'};
-    $bkpCmd .= "|bzip2 > " . $bkpFileName;
+    $bkpCmd .= "| " . $compUtil . " > " . $bkpFileName;
+
+    $self->log('base')->info("Backing up");
 
     my $shell = Term::Shell->new();
-    my $result = $shell->execCmd('cmd' => $bkpCmd, 'cmdsNeeded' => [ 'innobackupex', 'bzip2' ]);
+    my $result = $shell->execCmd('cmd' => $bkpCmd, 'cmdsNeeded' => [ 'innobackupex', $compUtil ]);
 
     $shell->fatal($result);
 
     $lastBkpInfo = $self->getLastBkpInfo();
 
-    my $uuidFileName = $bkpDir . "/" . $lastBkpInfo->{'uuid'} . ".xb.bz2";
+    $self->log('debug')->debug("Dumping last backup info after backup: ", sub { Dumper($lastBkpInfo) });
+
+    my $uuidFileName = $bkpDir . "/" . $lastBkpInfo->{'uuid'} . ".xb." . $compSuffix;
     my $uuidConfFile = $bkpDir . "/" . $lastBkpInfo->{'uuid'} . ".yaml";
+
+    $self->log('base')->info("Renaming $bkpFileName to $uuidFileName");
 
     move($bkpFileName, $uuidFileName);
 
-    $lastBkpInfo->{'start_time'} =~ /(\d{4})-(\d{2})-(\d{2})\s(\d{2})\:(\d{2})\:(\d{2})/;
+    $lastBkpInfo = $self->bkpInfoTimeToUTC('bkpInfo' => $lastBkpInfo);
 
-    my $startDt = DateTime->new(
-        'year' => $1,
-        'month' => $2,
-        'day' => $3,
-        'hour' => $4,
-        'minute' => $5,
-        'second' => $6,
-        'time_zone' => 'local'
-    );
-
-    $startDt->set_time_zone('UTC');
-
-    $lastBkpInfo->{'start_time'} = $startDt->ymd('-') . ' ' . $startDt->hms(':');
-
-    $lastBkpInfo->{'end_time'} =~ /(\d{4})-(\d{2})-(\d{2})\s(\d{2})\:(\d{2})\:(\d{2})/;
-
-    my $endDt = DateTime->new(
-        'year' => $1,
-        'month' => $2,
-        'day' => $3,
-        'hour' => $4,
-        'minute' => $5,
-        'second' => $6,
-        'time_zone' => 'local'
-    );
-
-    $endDt->set_time_zone('UTC');
-
-    $lastBkpInfo->{'end_time'} = $endDt->ymd('-') . ' ' . $endDt->hms(':');
+    $self->log('debug')->debug("Dumping last backup info with UTC times: ", sub { Dumper($lastBkpInfo) });
+    $self->log('base')->info("Writing YAML config for remote backups");
 
     my $yaml = YAML::Tiny->new($lastBkpInfo);
     $yaml->write($uuidConfFile);
+
+    $self->log('base')->info("Local backup finished!");
 
 } # end sub backup
 
@@ -108,13 +98,18 @@ sub restore() {
     my $restoreLocation = $params{'location'};
     my $backupsInfo = $params{'backupsInfo'};
     my $currentBkp = $backupsInfo->{$uuid};
+    my $compSuffix = $self->{'compressions'}->{$self->{'compression'}};
+    my $compUtil = $self->{'compression'};
     my $result = {};
    
     if( -d $restoreLocation ) {
+        $self->log->error("Restore location already exists!");
         croak "Restore location already exists!";
     } # if
 
     my $chain = [];
+
+    $self->log('base')->info("Getting backups info till nearest previous full backup");
 
     $chain = $self->getBackupChain(
                                     'backupsInfo' => $backupsInfo, 
@@ -122,44 +117,69 @@ sub restore() {
                                     'chain' => $chain
                                 );
 
+    $self->log('debug')->debug("Dumping backups chain:", sub { Dumper($chain) });
+
     my @revChain = reverse @$chain;                            
     my $fullBkp = shift @revChain;
 
+    $self->log('base')->info("Creating restore directory $restoreLocation");
+
     mkdir $restoreLocation;
 
-    my @files = glob($self->{'hostBkpDir'} . "/*/" . $fullBkp->{'uuid'} . ".xb.bz2");
+    my @files = glob($self->{'hostBkpDir'} . "/*/" . $fullBkp->{'uuid'} . ".xb." . $compSuffix);
     my $bkpFile = $files[0];
+
+    if( ! -f $bkpFile ) {
+        $self->log->error("Cannot find file with uuid " . $fullBkp->{'uuid'} . "!");
+        croak "Cannot find file with uuid " . $fullBkp->{'uuid'} . "!";
+    } # if
+    
+    $self->log('base')->info("Decompressing full backup $bkpFile to $restoreLocation");
 
     my $shell = Term::Shell->new();
 
-    my $decompCmd = "bzip2 -c -d " . $bkpFile . "|xbstream -x -C " . $restoreLocation;
+    my $decompCmd = $compUtil . " -c -d " . $bkpFile . "|xbstream -x -C " . $restoreLocation;
 
-    $result = $shell->execCmd('cmd' => $decompCmd, 'cmdsNeeded' => [ 'bzip2', 'xbstream' ]);
+    $result = $shell->execCmd('cmd' => $decompCmd, 'cmdsNeeded' => [ $compUtil, 'xbstream' ]);
 
     $shell->fatal($result);
+
+    $self->log('base')->info("Applying innodb logs on full backup");
 
     my $restoreFullCmd = "innobackupex --apply-log --redo-only " . $restoreLocation;
 
     try{
         $result = $shell->execCmd('cmd' => $restoreFullCmd, 'cmdsNeeded' => [ 'innobackupex' ]);
     } catch {
+        $self->log->error("Error: ", $result->{'msg'});
         remove_tree($restoreLocation);
         $shell->fatal($result);
     }; # try
+
+    $self->log('base')->info("Restoring each previous incremental backup and applying innodb logs");
 
     my $restoreIncrCmd = "innobackupex --apply-log --redo-only " . $restoreLocation . " --incremental-dir=";
 
     for my $prevBkp(@revChain) {
 
-        my @files = glob($self->{'hostBkpDir'} . "/*/" . $prevBkp->{'uuid'} . ".xb.bz2");
+        my @files = glob($self->{'hostBkpDir'} . "/*/" . $prevBkp->{'uuid'} . ".xb." . $compSuffix);
         my $bkpFile = $files[0];
+        
+        if( ! -f $bkpFile ) {
+            $self->log->error("Cannot find file with uuid " . $prevBkp->{'uuid'} . "!");
+            croak "Cannot find file with uuid " . $prevBkp->{'uuid'} . "!";
+        } # if
+        
         $bkpFile =~ /(.*)\/(.*)$/;
 
-        $restoreIncrCmd .= $1;
+        $self->log('base')->info("Incremental backup in dir $1 and uuid" . $prevBkp->{'uuid'});
 
+        $restoreIncrCmd .= $1;
+        
         try{
             $result = $shell->execCmd('cmd' => $restoreIncrCmd, 'cmdsNeeded' => [ 'innobackupex' ]);
         } catch {
+            $self->log->error("Error: ", $result->{'msg'});
             remove_tree($restoreLocation);
             $shell->fatal($result);
         }; # try
@@ -168,15 +188,24 @@ sub restore() {
 
     my $lastIncrCmd = "innobackupex --apply-log " . $restoreLocation . " --incremental-dir=";
 
-    @files = glob($self->{'hostBkpDir'} . "/*/" . $currentBkp->{'uuid'} . ".xb.bz2");
+    @files = glob($self->{'hostBkpDir'} . "/*/" . $currentBkp->{'uuid'} . ".xb." . $compSuffix);
     $bkpFile = $files[0];
+    
+    if( ! -f $bkpFile ) {
+        $self->log->error("Cannot find file with uuid " . $currentBkp->{'uuid'} . "!");
+        croak "Cannot find file with uuid " . $currentBkp->{'uuid'} . "!";
+    } # if
+        
     $bkpFile =~ /(.*)\/(.*)$/;
+
+    $self->log('base')->info("Restoring last incremental backup, applying innodb logs and reverting uncommited transactions");
 
     $lastIncrCmd .= $1;
 
     try{
         $result = $shell->execCmd('cmd' => $lastIncrCmd, 'cmdsNeeded' => [ 'innobackupex' ]);
     } catch {
+        $self->log->error("Error: ", $result->{'msg'});
         remove_tree($restoreLocation);
         $shell->fatal($result);
     }; # try
@@ -186,17 +215,98 @@ sub restore() {
     try{
         $result = $shell->execCmd('cmd' => $restoreFullRollbackCmd, 'cmdsNeeded' => [ 'innobackupex' ]);
     } catch {
+        $self->log->error("Error: ", $result->{'msg'});
         remove_tree($restoreLocation);
         $shell->fatal($result);
     }; # try
 
+    $self->log('base')->info("Removing percona files in $restoreLocation");
+
     unlink glob("$restoreLocation/xtrabackup_*");
     unlink "$restoreLocation/backup-my.cnf";
 
+    $self->log('base')->info("Restoration successful");
+
 } # end sub restore
 
-sub dump() {
-}
+sub rmt_backup() {
+
+    my $self = shift;
+    my %params = @_;
+    my $hostInfo = $params{'hostInfo'};
+    my $privKeyPath = $params{'privKeyPath'};
+    my $bkpFileName = $params{'bkpFileName'};
+    my $compUtil = $self->{'compression'};
+    
+    my $shell = Term::Shell->new();
+    
+    $self->log('base')->info("Checking if history exists on remote host: ", $hostInfo->{'ip'});
+    
+    my $checkIfDbExists = "ssh -i " . $privKeyPath . " " . $hostInfo->{'ip'} . " '";
+    $checkIfDbExists .= 'mysql -e "SELECT COUNT(*) AS dbexists from';
+    $checkIfDbExists .= ' information_schema.tables WHERE table_schema=\"PERCONA_SCHEMA\"';
+    $checkIfDbExists .= ' and table_name=\"xtrabackup_history\""';
+    $checkIfDbExists .= ' -u ' . $hostInfo->{'user'} . " -p\Q$hostInfo->{'pass'}\E";
+    $checkIfDbExists .= ' -h ' . $hostInfo->{'local_host'} . ' -X';
+    $checkIfDbExists .= ' -S ' . $hostInfo->{'socket'} . "'";
+    
+    my $result = $shell->execCmd('cmd' => $checkIfDbExists, 'cmdsNeeded' => [ 'ssh' ]);
+
+    my $dbExists = $self->mysqlXmlToHash('xml' => $result->{'msg'});
+    
+    $self->log('debug')->debug("Result of history check is: ", $result->{'msg'});
+    
+    if($dbExists->{'dbexists'} == 0 ) {
+        $self->log->error("Incremental backup needs previous backup, no local database found on remote host!");
+        croak "Incremental backup needs previous backup, no local database found on remote host!";
+    } # if
+    
+    $self->log('base')->info("Getting info about last backup for host: ", $hostInfo->{'ip'});
+    
+    my $lastBkpInfoCmd = "ssh -i " . $privKeyPath . " " . $hostInfo->{'ip'} . " '";
+    $lastBkpInfoCmd .= 'mysql -e "select * from PERCONA_SCHEMA.xtrabackup_history';
+    $lastBkpInfoCmd .= ' ORDER BY innodb_to_lsn DESC, start_time DESC LIMIT 1"';
+    $lastBkpInfoCmd .= ' -u ' . $hostInfo->{'user'} . " -p\Q$hostInfo->{'pass'}\E";
+    $lastBkpInfoCmd .= ' -h ' . $hostInfo->{'local_host'} . ' -X';
+    $lastBkpInfoCmd .= ' -S ' . $hostInfo->{'socket'} . "'";
+    
+    $result = $shell->execCmd('cmd' => $lastBkpInfoCmd, 'cmdsNeeded' => [ 'ssh' ]);
+
+    $shell->fatal($result);
+    
+    my $lastBkpInfo = $self->mysqlXmlToHash('xml' => $result->{'msg'});
+    
+    $self->log('debug')->debug("Dumping last backup info: ", sub { Dumper($lastBkpInfo) });
+    
+    $self->log('base')->info("Executing incremental backup on remote host $hostInfo->{'ip'} on socket $hostInfo->{'socket'}");
+    
+    my $rmtBkpCmd = "ssh -i " . $privKeyPath . " " . $hostInfo->{'ip'} . " '";
+    $rmtBkpCmd .= "innobackupex --incremental --user=" . $hostInfo->{'user'};
+    $rmtBkpCmd .= " --history --stream=xbstream --host=" . $hostInfo->{'local_host'};
+    $rmtBkpCmd .= " --password=\Q$hostInfo->{'pass'}\E --incremental-force-scan";
+    $rmtBkpCmd .= " --incremental-history-uuid=" . $lastBkpInfo->{'uuid'};
+    $rmtBkpCmd .= " --socket=" . $hostInfo->{'socket'};
+    $rmtBkpCmd .= " " . $hostInfo->{'local_dir'};
+    $rmtBkpCmd .= "| " . $compUtil . " -c ' > " . $bkpFileName;
+    
+    $result = $shell->execCmd('cmd' => $rmtBkpCmd, 'cmdsNeeded' => [ 'ssh' ]);
+
+    $self->log('debug')->debug("Result of command is: ", $result->{'msg'});
+    
+    $shell->fatal($result);
+ 
+    return $result;
+    
+} # end sub rmt_backup
+
+sub restore_rmt() {
+
+    my $self = shift;
+    my %params = @_;
+
+    $self->restore(%params);
+
+} # end sub restore_rmt
 
 sub getBackupChain() {
 

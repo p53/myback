@@ -10,21 +10,24 @@ use File::Glob;
 use File::Copy;
 use File::Path;
 use File::Basename;
-use File::Copy::Recursive;
 use DateTime;
+use Data::Dumper;
 use DBI;
 use YAML::Tiny;
 
 use Term::Shell;
 
-with 'Backup::BackupInterface';
+with 'Backup::BackupInterface', 'MooseX::Log::Log4perl';
 
 sub backup() {
 
     my $self = shift;
     my %params = @_;
-
+    my $compSuffix = $self->{'compressions'}->{$self->{'compression'}};
+    my $compUtil = $self->{'compression'};
+    
     if( !( defined $params{'user'} && defined $params{'pass'} ) ) {
+        $self->log->error("You need to specify user, pass!");
         croak "You need to specify user, pass!";
     } # if
 
@@ -32,62 +35,47 @@ sub backup() {
     my $now = $dateTime->ymd('-') . 'T' . $dateTime->hms('-');
     my $bkpDir = $self->{'hostBkpDir'} . "/" . $now;
 
-    mkpath($bkpDir) if ! -d $bkpDir;
+    $self->log('base')->info("Creating backup directory for local backup:", $bkpDir);
 
-    my $bkpFileName = $bkpDir . "/" . $now . ".xb.bz2";
+    mkpath($bkpDir) if ! -d $bkpDir;  
+    
+    my $bkpFileName = $bkpDir . "/" . $now . ".xb." . $compSuffix;
 
     my $fullBkpCmd = "innobackupex --user=" . $self->{'user'};
     $fullBkpCmd .= " --history --stream=xbstream --host=" . $self->{'host'};
-    $fullBkpCmd .= " --password=" . $self->{'pass'} . " " . $self->{'hostBkpDir'};
+    $fullBkpCmd .= " --password='$self->{'pass'}' " . $self->{'hostBkpDir'};
     $fullBkpCmd .= " --socket=" . $self->{'socket'};
-    $fullBkpCmd .= "|bzip2 > " . $bkpFileName;
+    $fullBkpCmd .= "| " . $compUtil . " > " . $bkpFileName;
+
+    $self->log('base')->info("Backing up");
 
     my $shell = Term::Shell->new();
-    my $result = $shell->execCmd('cmd' => $fullBkpCmd, 'cmdsNeeded' => [ 'innobackupex', 'bzip2' ]);
+    my $result = $shell->execCmd('cmd' => $fullBkpCmd, 'cmdsNeeded' => [ 'innobackupex', $compUtil ]);
 
     $shell->fatal($result);
 
+    $self->log('base')->info("Full backup of host $self->{'host'} to $self->{'hostBkpDir'} on socket $self->{'socket'} to file $bkpFileName successful");
+
     my $lastBkpInfo = $self->getLastBkpInfo();
 
-    my $uuidFileName = $bkpDir . "/" . $lastBkpInfo->{'uuid'} . ".xb.bz2";
+    $self->log('debug')->debug("Dumping last backup info: ", sub { Dumper($lastBkpInfo) });
+
+    my $uuidFileName = $bkpDir . "/" . $lastBkpInfo->{'uuid'} . ".xb." . $compSuffix;
     my $uuidConfFile = $bkpDir . "/" . $lastBkpInfo->{'uuid'} . ".yaml";
+
+    $self->log('base')->info("Renaming $bkpFileName to $uuidFileName");
 
     move($bkpFileName, $uuidFileName);
 
-    $lastBkpInfo->{'start_time'} =~ /(\d{4})-(\d{2})-(\d{2})\s(\d{2})\:(\d{2})\:(\d{2})/;
+    $lastBkpInfo = $self->bkpInfoTimeToUTC('bkpInfo' => $lastBkpInfo);
 
-    my $startDt = DateTime->new(
-        'year' => $1,
-        'month' => $2,
-        'day' => $3,
-        'hour' => $4,
-        'minute' => $5,
-        'second' => $6,
-        'time_zone' => 'local'
-    );
-
-    $startDt->set_time_zone('UTC');
-
-    $lastBkpInfo->{'start_time'} = $startDt->ymd('-') . ' ' . $startDt->hms(':');
-
-    $lastBkpInfo->{'end_time'} =~ /(\d{4})-(\d{2})-(\d{2})\s(\d{2})\:(\d{2})\:(\d{2})/;
-
-    my $endDt = DateTime->new(
-        'year' => $1,
-        'month' => $2,
-        'day' => $3,
-        'hour' => $4,
-        'minute' => $5,
-        'second' => $6,
-        'time_zone' => 'local'
-    );
-
-    $endDt->set_time_zone('UTC');
-
-    $lastBkpInfo->{'end_time'} = $endDt->ymd('-') . ' ' . $endDt->hms(':');
+    $self->log('debug')->debug("Dumping last backup info with UTC times: ", sub { Dumper($lastBkpInfo) });
+    $self->log('base')->info("Writing YAML config for remote backups");
 
     my $yaml = YAML::Tiny->new($lastBkpInfo);
     $yaml->write($uuidConfFile);
+
+    $self->log('base')->info("Local backup finished!");
 
 } # end sub backup
 
@@ -97,42 +85,96 @@ sub restore() {
     my %params = @_;
     my $uuid = $params{'uuid'};
     my $restoreLocation = $params{'location'};
-
+    my $compSuffix = $self->{'compressions'}->{$self->{'compression'}};
+    my $compUtil = $self->{'compression'};
     my $result = {};
 
     if( -d $restoreLocation ) {
+        $self->log->error("Restore location already exists!");
         croak "Restore location already exists!";
     } # if
 
+    $self->log('base')->info("Creating restore directory $restoreLocation");
+
     mkdir $restoreLocation;
 
-    my @files = glob($self->{'hostBkpDir'} . "/*/" . $uuid . ".xb.bz2");
+    my @files = glob($self->{'hostBkpDir'} . "/*/" . $uuid . ".xb." . $compSuffix);
     my $bkpFile = $files[0];
+
+    if( ! -f $bkpFile ) {
+        $self->log->error("Cannot find file with uuid $uuid!");
+        croak "Cannot find file with uuid $uuid!";
+    } # if
+    
+    $self->log('base')->info("Decompressing backup $bkpFile to $restoreLocation");
 
     my $shell = Term::Shell->new();
 
-    my $decompCmd = "bzip2 -c -d " . $bkpFile . "|xbstream -x -C " . $restoreLocation;
+    my $decompCmd = $compUtil . " -c -d " . $bkpFile . " | xbstream -x -C " . $restoreLocation;
 
-    $result = $shell->execCmd('cmd' => $decompCmd, 'cmdsNeeded' => [ 'bzip2', 'xbstream' ]);
+    $result = $shell->execCmd('cmd' => $decompCmd, 'cmdsNeeded' => [ $compUtil, 'xbstream' ]);
 
     $shell->fatal($result);
+
+    $self->log('base')->info("Applying innodb log and reverting uncommitted transactions to $restoreLocation");
 
     my $restoreCmd = "innobackupex --apply-log " . $restoreLocation;
 
     try{
         $result = $shell->execCmd('cmd' => $restoreCmd, 'cmdsNeeded' => [ 'innobackupex' ]);
     } catch {
+        $self->log->error("Error: ", $result->{'msg'});
         remove_tree($restoreLocation);
         $shell->fatal($result);
     }; # try
 
+    $self->log('base')->info("Removing percona files in $restoreLocation");
+
     unlink glob("$restoreLocation/xtrabackup_*");
     unlink "$restoreLocation/backup-my.cnf";
 
+    $self->log('base')->info("Restoration successful");
+
 } # end sub restore
 
-sub dump() {
-}
+sub rmt_backup() {
+
+    my $self = shift;
+    my %params = @_;
+    my $hostInfo = $params{'hostInfo'};
+    my $privKeyPath = $params{'privKeyPath'};
+    my $bkpFileName = $params{'bkpFileName'};
+    my $compUtil = $self->{'compression'};
+    
+    my $shell = Term::Shell->new();
+    
+    $self->log('base')->info("Executing full backup on remote host $hostInfo->{'ip'} on socket $hostInfo->{'socket'}");
+    
+    my $rmtBkpCmd = "ssh -i " . $privKeyPath . " " . $hostInfo->{'ip'} . " '";
+    $rmtBkpCmd .= "innobackupex --user=" . $hostInfo->{'user'};
+    $rmtBkpCmd .= " --history --stream=xbstream --host=" . $hostInfo->{'local_host'};
+    $rmtBkpCmd .= " --password=\Q$hostInfo->{'pass'}\E " . $hostInfo->{'local_dir'};
+    $rmtBkpCmd .= " --socket=" . $hostInfo->{'socket'};
+    $rmtBkpCmd .= " 2>/dev/null | " . $compUtil . " -c ' > " . $bkpFileName;
+    
+    my $result = $shell->execCmd('cmd' => $rmtBkpCmd, 'cmdsNeeded' => [ 'ssh' ]);
+
+    $self->log('debug')->debug("Result of command is: ", $result->{'msg'});
+    
+    $shell->fatal($result);
+ 
+    return $result;
+    
+} # end sub rmt_backup
+
+sub restore_rmt() {
+
+    my $self = shift;
+    my %params = @_;
+
+    $self->restore(%params);
+
+} # end sub restore_rmt
 
 no Moose::Role;
 

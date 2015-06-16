@@ -11,10 +11,11 @@ use File::Glob;
 use File::Copy;
 use File::Path;
 use File::Basename;
-use File::Copy::Recursive;
+use IO::File;
 use DateTime;
+use Data::Dumper;
 use DBI;
-use YAML::Tiny;
+use XML::LibXML;
 
 subtype 'DirectoryExists',
     => as 'Str'
@@ -46,11 +47,6 @@ has 'user' => (
     isa => 'Str'
 );
 
-has 'port' => (
-    is => 'rw',
-    isa => 'Int'
-);
-
 has 'pass' => (
     is => 'rw',
     isa => 'Str'
@@ -74,12 +70,30 @@ has 'socket' => (
 
 has 'bkpDb' => (
     is => 'rw',
-    default => 'data/bkpdb'
+    default => '/var/lib/myback/bkpdb'
+);
+
+has 'compression' => (
+    is => 'rw',
+    isa => 'Str',
+    default => 'pigz'
+);
+
+has 'compressions' => (
+    is => 'rw',
+    isa => 'HashRef',
+    default => sub { 
+                    return { 
+                        'gzip' => 'gz',
+                        'bzip2' => 'bz2',
+                        'pigz' => 'gz'
+                    } 
+                }
 );
 
 sub backup() {}
 sub restore() {}
-sub dump() {}
+sub dump_rmt() {}
 sub restore_rmt() {}
 sub list_rmt() {}
 
@@ -113,13 +127,57 @@ sub getLastBkpInfo() {
 
 } # end sub getLastBackup
 
-sub rmt_backup() {
+sub bkpInfoTimeToUTC() {
+
+    my $self = shift;
+    my %params = @_;
+    my $bkpInfo = $params{'bkpInfo'};
+    
+    $bkpInfo->{'start_time'} =~ /(\d{4})-(\d{2})-(\d{2})\s(\d{2})\:(\d{2})\:(\d{2})/;
+
+    my $startDt = DateTime->new(
+        'year' => $1,
+        'month' => $2,
+        'day' => $3,
+        'hour' => $4,
+        'minute' => $5,
+        'second' => $6,
+        'time_zone' => 'local'
+    );
+
+    $startDt->set_time_zone('UTC');
+
+    $bkpInfo->{'start_time'} = $startDt->ymd('-') . ' ' . $startDt->hms(':');
+
+    $bkpInfo->{'end_time'} =~ /(\d{4})-(\d{2})-(\d{2})\s(\d{2})\:(\d{2})\:(\d{2})/;
+
+    my $endDt = DateTime->new(
+        'year' => $1,
+        'month' => $2,
+        'day' => $3,
+        'hour' => $4,
+        'minute' => $5,
+        'second' => $6,
+        'time_zone' => 'local'
+    );
+
+    $endDt->set_time_zone('UTC');
+
+    $bkpInfo->{'end_time'} = $endDt->ymd('-') . ' ' . $endDt->hms(':');
+    
+    return $bkpInfo;
+    
+} # end sub bkpInfoTimeToUTC
+
+sub rmt_tmp_backup() {
 
     my $self = shift;
     my %params = @_;
     my $privKeyPath = '/tmp/' . $self->{'host'} . '.priv';
     my $hostInfo = {};
     my @hostsInfo = ();
+
+    $self->log('base')->info("Starting remote backup for host alias ", $self->{'host'});
 
     my $dbh = DBI->connect(
                             "dbi:SQLite:dbname=" . $self->{'bkpDb'},
@@ -135,18 +193,23 @@ sub rmt_backup() {
     @hostsInfo = @{ $dbh->selectall_arrayref($query, { Slice => {} }) };
 
     if( length(@hostsInfo) == 0 ) {
+        $self->log->error("No such host!");
         croak "No such host!";
     } elsif( length(@hostsInfo) > 1 ) {
-        croak "Found more than one host with that name, check your DB!";
+        $self->log->error("Found more than one alias with that name, check your DB!");
+        croak "Found more than one alias with that name, check your DB!";
     } # if
 
     $hostInfo = $hostsInfo[0];
 
     if( !( defined $hostInfo->{'user'} && defined $hostInfo->{'pass'} ) ) {
+        $self->log->error("You need to specify user, pass for remote host!");
         croak "You need to specify user, pass for remote host!";
     } # if
 
     my $aliasBkpDir = $self->{'bkpDir'} . '/' . $hostInfo->{'alias'};
+
+    $self->log('base')->info("Creating directory on server for alias $aliasBkpDir");
 
     mkpath($aliasBkpDir) if ! -d $aliasBkpDir;
 
@@ -158,9 +221,11 @@ sub rmt_backup() {
 
     chmod 0600, $privKeyPath;
 
+    $self->log('base')->info("Executing backup of type $params{'bkpType'} on remote host $hostInfo->{'ip'} on socket $hostInfo->{'socket'}");
+
     my $rmtBkpCmd = "ssh -i " . $privKeyPath . " " . $hostInfo->{'ip'} . " '";
     $rmtBkpCmd .= 'myback -a backup -b ' . $params{'bkpType'} . ' -u ' . $hostInfo->{'user'};
-    $rmtBkpCmd .= ' -s ' . $hostInfo->{'pass'} . ' -d ' . $hostInfo->{'local_dir'};
+    $rmtBkpCmd .= " -s \Q$hostInfo->{'pass'}\E -d " . $hostInfo->{'local_dir'};
     $rmtBkpCmd .= ' -o ' . $hostInfo->{'socket'} . ' -h ' . $hostInfo->{'local_host'};
     $rmtBkpCmd .= "'";
 
@@ -171,7 +236,9 @@ sub rmt_backup() {
 
     my $remoteDir = $hostInfo->{'local_dir'} . '/' . $hostInfo->{'local_host'};
 
-    my $rmtCpCmd = "rsync -avz -e ssh " . $hostInfo->{'ip'} . ":" . $remoteDir . '/*';
+    $self->log('base')->info("Syncing remote directory $remoteDir with server directory $aliasBkpDir");
+
+    my $rmtCpCmd = "rsync -avz -e 'ssh -i $privKeyPath' " . $hostInfo->{'ip'} . ":" . $remoteDir . '/*';
     $rmtCpCmd .= " " . $aliasBkpDir;
 
     $result = $shell->execCmd('cmd' => $rmtCpCmd, 'cmdsNeeded' => [ 'rsync', 'ssh' ]);
@@ -180,13 +247,19 @@ sub rmt_backup() {
 
     my @bkpConfFiles = glob($aliasBkpDir . '/*/*.yaml');
 
+    $self->log('base')->info("Starting import info about copied backups from yaml files");
+
     for my $bkpConf(@bkpConfFiles) {
         
+        $self->log('debug')->debug("Reading $bkpConf");
+
         my $yaml = YAML::Tiny->read($bkpConf);
         my $config = $yaml->[0];
         
         my @values = values(%$config);
         my @escVals = map { my $s = $_; $s = $dbh->quote($s); $s } @values;
+
+        $self->log('debug')->debug("Dumping imported info: ", sub { Dumper($config) });
 
         my $query = "INSERT INTO history(" . join( ",", keys(%$config) ) . ",";
         $query .=  "bkpconf_id)";
@@ -195,12 +268,15 @@ sub rmt_backup() {
         my $sth = $dbh->prepare($query);
         $sth->execute();
 
+        $self->log('debug')->debug("Removing $bkpConf");
+
         unlink $bkpConf;
 
         $bkpConf =~ /(.*)\/(.*)\/(.*)\.yaml$/;
         my $dateDir = $2;
 
         if( !defined $remoteDir || !defined $dateDir) {
+            $self->log->error("You don't define remote host directory and date directory!");
             croak "You don't define remote host directory and date directory!";
         } # if
 
@@ -208,6 +284,8 @@ sub rmt_backup() {
         my $cleanupSrcDir = "ssh -i " . $privKeyPath . " " . $hostInfo->{'ip'} . " '";
         $cleanupSrcDir .= 'rm -rf ' . $rmtSrcDir;
         $cleanupSrcDir .= "'";
+
+        $self->log('debug')->debug("Removing remote directory $rmtSrcDir");
 
         $result = $shell->execCmd('cmd' => $cleanupSrcDir, 'cmdsNeeded' => [ 'ssh', 'rm' ]);
         
@@ -217,9 +295,35 @@ sub rmt_backup() {
 
     $dbh->disconnect();
 
+    $self->log('base')->info("Removing temporary private key file");
+
     unlink $privKeyPath;
 
-} # end sub rmt_backup
+    $self->log('base')->info("Backup successful");
+
+} # end sub rmt_tmp_backup
+
+sub mysqlXmlToHash() {
+
+    my $self = shift;
+    my %params = @_;
+    my $xml = $params{'xml'};
+    my $data = {};
+    
+    my $parser = XML::LibXML->new;
+    my $doc = $parser->parse_string($xml);
+    my $root = $doc->documentElement();
+    my @nodeList = $doc->getElementsByTagName('field');
+    
+    for my $node(@nodeList) {
+        my $key = $node->getAttribute('name');
+        my $val = $node->textContent;
+        $data->{$key} = $val;
+    } # for
+    
+    return $data;
+    
+} # end sub mysqlXmlToHash
 
 no Moose::Role;
 

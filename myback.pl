@@ -3,10 +3,9 @@
 BEGIN {
         use Cwd 'abs_path';
         # getting absolute path to this script and get current folder and library path
-        my $scriptPath = abs_path($0);
+        our $scriptPath = abs_path($0);
         $scriptPath =~ s/^(.*)(\/|\\).*$/$1/;
         our $classesPath = $scriptPath . '/lib';
-
 } # BEGIN
 
 use lib $main::classesPath;
@@ -18,15 +17,28 @@ use Getopt::Long;
 use Pod::Usage;
 use Sys::Hostname;
 use DateTime;
+use Data::Dumper;
+use Log::Log4perl qw(:levels);
 
 use Backup::Backup;
+
+my $log_conf = $main::scriptPath . "/etc/log.conf";
+Log::Log4perl::init($log_conf);
+
+my $dbgLogger = Log::Log4perl->get_logger('debug');
+my $baseLogger = Log::Log4perl->get_logger('base');
+
+$dbgLogger->level($DEBUG);
+$baseLogger->level($INFO);
+
+$dbgLogger->debug('Starting');
+$dbgLogger->debug('Parsing arguments');
 
 my $help = 0;
 my $action = '';
 my $dir = '';
 my $host = '';
 my $user = '';
-my $port = 0;
 my $pass = '';
 my $location = '';
 my $dbname = '';
@@ -44,10 +56,11 @@ my $allowedTypes = {
 my $allowedActions = {
                         'backup' => 1,
                         'restore' => 1,
-                        'dump' => 1,
                         'list' => 1,
                         'rmt_backup' => 1,
-                        'list_rmt' => 1
+                        'list_rmt' => 1,
+                        'restore_rmt' => 1,
+                        'dump_rmt' => 1
                     };
 
 my $allowedFormats = {
@@ -63,7 +76,6 @@ GetOptions(
                 'host|h=s' => \$host,
                 'type|b:s' => \$type,
                 'user|u:s' => \$user,
-                'port|p:i' => \$port,
                 'pass|s:s' => \$pass,
                 'loc|l:s' => \$location,
                 'id|i:s' => \$id,
@@ -80,6 +92,7 @@ pod2usage(1) if !$dir;
 pod2usage(1) if !$host;
 
 pod2usage(-verbose => 3) if !defined( $allowedActions->{$action} );
+
 pod2usage(1) if ( $action eq 'restore' && !($dir && $host && $id && $location) );
 pod2usage(1) if ( $action eq 'list' && !($dir && $host && $format && $user && $pass) );
 pod2usage(1) if ( $action eq 'list' && !defined( $allowedFormats->{$format} ) );
@@ -95,6 +108,9 @@ if( $action eq 'dump' && !($dir && $location && $dbname && $host) ) {
 } # if
 
 pod2usage(1) if ( $action eq 'rmt_backup' && !($dir && $host && $type) );
+pod2usage(1) if ( $action eq 'list_rmt' && !($dir && $host && $format) );
+pod2usage(1) if ( $action eq 'restore_rmt' && !($dir && $host && $id && $location) );
+pod2usage(1) if ( $action eq 'dump_rmt' && !($dir && $host && $id && $location && $user && $pass && $dbname) );
 
 my $hostBkpDir = $dir . "/" . $host;
 
@@ -102,7 +118,6 @@ my %params = (
     "bkpDir" => $dir,
     "host" => $host,
     "user" => $user,
-    "port" => $port,
     "pass" => $pass,
     "location" => $location,
     "dbname" => $dbname,
@@ -112,6 +127,9 @@ my %params = (
     "format" => $format,
     "socket" => $socket
 );
+
+$dbgLogger->debug("Dumping parameters: ", sub { Dumper(\%params) } );
+$dbgLogger->debug("Starting action:", $action);
 
 my $backupObj = Backup::Backup->new(
                                     'bkpDir' => $dir, 
@@ -124,7 +142,6 @@ my $backupObj = Backup::Backup->new(
 
 $backupObj->$action(%params);
 
-
 __END__
 
 =head1 NAME
@@ -133,10 +150,11 @@ __END__
 
 =head1 SYNOPSIS
 
-        myback [--help] [--action|-a] action [--dir|-d] path [--host|-h] database_host 
-                [--type|-t] backup_type [--user|-u] database_user [--port|-p] database_port
+        myback [--help|-h] [--action|-a] action [--dir|-d] path [--host|-h] database_host 
+                [--type|-b] backup_type [--user|-u] database_user
                 [--pass|-s] password [--loc|-l] location_of_mysql_dir
-                [--id|-i] id_of_backup [--dbname|-n] database_name [--config|-c] config_path
+                [--id|-i] id_of_backup [--dbname|-n] database_name
+                [--socket|o] socket
 
 =head1 DESCRIPTION
 
@@ -146,23 +164,89 @@ __END__
 
 =over 8
 
-=item B<--help>
+=item B<--help|-h>
 
         prints help for utility
 
-=item B<--file>
+=item B<--action|-a>
 
-        location of the SRTS html file
+    Can be one of these:
+    
+    backup
+        creates local backup to the directory dir
+        requires: dir, user, password, backup_type, name of database host
+        optional: socket
+        
+    restore
+        creates local restore to the directory loc
+        requires: dir, host, id, location
+        
+    list
+        lists backups on host
+        requires: dir, host, format, user, pass
+        optional: socket
+        
+    rmt_backup
+        initiates backup on remote host, backups remote host and transfer
+        backup on server to directory dir, insert info about backup to server database
+        requires: dir, host - host is alias for the remote host
+        (there can be several db ports on one host...), type
+        
+    list_rmt
+        lists backups from remote hosts, which where transfered to the server
+        during rmt_backup
+        requires: dir, host (again alias), format
+        
+    restore_rmt
+        restores backup from remote hosts, stored on server to the location loc
+        from dir
+        requires: dir, host (alias), id, location
+        
+    dump_rmt
+        dumps backup from remote hosts, stored on server to the location loc
+        from dir
+        requires: dir, host, id, location, user, pass, dbname
+        optional: socket
+        
+=item B<--dir|-d>
 
-=item B<--type>
+        This is path to the directory, where backups are present, whether remote
+        or local
 
-        name of supported storage type to convert to ASM format
-        Currently supported types: EMC, HITACHI
+=item B<--host|-h>
 
-=item B<--host>
+        this is hostname or alias for which you want to make backup, depends
+        on the action you are executing, if you are executing remote commands
+        it means alias of host because in db records on server one host can have
+        multiple aliases, because host can have databases on multiple ports
 
-        this is hostname for which you want to produce output
+=item B<--type|-b>
 
+        This is type of backups you want to execute, can be:
+        
+        incremental
+        full
+        
+=item B<--user|-u>
+        Database user
+        
+=item B<--pass|-s>
+        Database password
+        
+=item B<--loc|-l>
+        this is directory path where restores/dumps are decompressed and restored
+        
+=item B<--id|-i>
+        every backup has uniq uuid
+        
+=item B<--dbname|-n>
+        this is valid option just for dump_rmt action, specifies which databases
+        we want to dump, supplied as comma separated list, we can specify: all,
+        for dumping all databases in one file
+     
+=item B<--socket|-o>
+        database socket
+        
 =back
 
 =head1 AUTHOR
@@ -171,7 +255,7 @@ __END__
 
 =head1 COPYRIGHT
 
-        Pavol Ipoth, ALL RIGHTS RESERVED, 2014
+        Pavol Ipoth, ALL RIGHTS RESERVED, 2015
 
 =head1 License
 
