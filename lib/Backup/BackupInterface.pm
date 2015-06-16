@@ -104,9 +104,9 @@ sub getLastBkpInfo() {
     my $info = {};
 
     my $dbh = DBI->connect(
-                            "DBI:mysql:database=PERCONA_SCHEMA;host=localhost;mysql_socket=" . $self->{'socket'},
-                            $self->{'user'}, 
-                            $self->{'pass'},
+                            "DBI:mysql:database=PERCONA_SCHEMA;host=localhost;mysql_socket=" . $params{'socket'},
+                            $params{'user'}, 
+                            $params{'pass'},
                             {'RaiseError' => 1}
                         );
 
@@ -173,11 +173,11 @@ sub rmt_tmp_backup() {
 
     my $self = shift;
     my %params = @_;
-    my $privKeyPath = '/tmp/' . $self->{'host'} . '.priv';
+    my $privKeyPath = '/tmp/' . $params{'host'} . '.priv';
     my $hostInfo = {};
     my @hostsInfo = ();
 
-    $self->log('base')->info("Starting remote backup for host alias ", $self->{'host'});
+    $self->log('base')->info("Starting remote backup for host alias ", $params{'host'});
 
     my $dbh = DBI->connect(
                             "dbi:SQLite:dbname=" . $self->{'bkpDb'},
@@ -188,7 +188,7 @@ sub rmt_tmp_backup() {
 
     my $query = "SELECT * FROM host JOIN bkpconf";
     $query .= " ON host.host_id=bkpconf.host_id";
-    $query .= " WHERE bkpconf.alias='" . $self->{'host'} . "'";
+    $query .= " WHERE bkpconf.alias='" . $params{'host'} . "'";
 
     @hostsInfo = @{ $dbh->selectall_arrayref($query, { Slice => {} }) };
 
@@ -207,7 +207,7 @@ sub rmt_tmp_backup() {
         croak "You need to specify user, pass for remote host!";
     } # if
 
-    my $aliasBkpDir = $self->{'bkpDir'} . '/' . $hostInfo->{'alias'};
+    my $aliasBkpDir = $params{'bkpDir'} . '/' . $hostInfo->{'alias'};
 
     $self->log('base')->info("Creating directory on server for alias $aliasBkpDir");
 

@@ -30,9 +30,9 @@ sub backup() {
         croak "You need to specify user, pass!";
     } # if
 
-    if( ! -d $self->{'hostBkpDir'} ) {
-        $self->log->error("$self->{'hostBkpDir'} does not exist, incremental backup needs previous backup!");
-        croak "$self->{'hostBkpDir'} does not exist, incremental backup needs previous backup!";
+    if( ! -d $params{'hostBkpDir'} ) {
+        $self->log->error("$params{'hostBkpDir'} does not exist, incremental backup needs previous backup!");
+        croak "$params{'hostBkpDir'} does not exist, incremental backup needs previous backup!";
     } # if
 
     my $lastBkpInfo = $self->getLastBkpInfo();
@@ -41,7 +41,7 @@ sub backup() {
 
     my $dateTime = DateTime->now();
     my $now = $dateTime->ymd('-') . 'T' . $dateTime->hms('-');
-    my $bkpDir = $self->{'hostBkpDir'} . "/" . $now;
+    my $bkpDir = $params{'hostBkpDir'} . "/" . $now;
 
     $self->log('base')->info("Creating backup directory for local backup:", $bkpDir);
 
@@ -52,12 +52,12 @@ sub backup() {
     # preparing and executing tool incremental command
     # incremental-force-scan is requisite because backup without scan is
     # implemented only by percona mysql version
-    my $bkpCmd = "innobackupex --incremental --user=" . $self->{'user'};
-    $bkpCmd .= " --history --stream=xbstream --host=" . $self->{'host'};
-    $bkpCmd .= " --password='$self->{'pass'}' --incremental-force-scan";
+    my $bkpCmd = "innobackupex --incremental --user=" . $params{'user'};
+    $bkpCmd .= " --history --stream=xbstream --host=" . $params{'host'};
+    $bkpCmd .= " --password='$params{'pass'}' --incremental-force-scan";
     $bkpCmd .= " --incremental-history-uuid=" . $lastBkpInfo->{'uuid'};
-    $bkpCmd .= " --socket=" . $self->{'socket'};
-    $bkpCmd .= " " . $self->{'hostBkpDir'};
+    $bkpCmd .= " --socket=" . $params{'socket'};
+    $bkpCmd .= " " . $params{'hostBkpDir'};
     $bkpCmd .= "| " . $compUtil . " > " . $bkpFileName;
 
     $self->log('base')->info("Backing up");
@@ -126,7 +126,7 @@ sub restore() {
 
     mkdir $restoreLocation;
 
-    my @files = glob($self->{'hostBkpDir'} . "/*/" . $fullBkp->{'uuid'} . ".xb." . $compSuffix);
+    my @files = glob($params{'hostBkpDir'} . "/*/" . $fullBkp->{'uuid'} . ".xb." . $compSuffix);
     my $bkpFile = $files[0];
 
     if( ! -f $bkpFile ) {
@@ -162,7 +162,7 @@ sub restore() {
 
     for my $prevBkp(@revChain) {
 
-        my @files = glob($self->{'hostBkpDir'} . "/*/" . $prevBkp->{'uuid'} . ".xb." . $compSuffix);
+        my @files = glob($params{'hostBkpDir'} . "/*/" . $prevBkp->{'uuid'} . ".xb." . $compSuffix);
         my $bkpFile = $files[0];
         
         if( ! -f $bkpFile ) {
@@ -188,7 +188,7 @@ sub restore() {
 
     my $lastIncrCmd = "innobackupex --apply-log " . $restoreLocation . " --incremental-dir=";
 
-    @files = glob($self->{'hostBkpDir'} . "/*/" . $currentBkp->{'uuid'} . ".xb." . $compSuffix);
+    @files = glob($params{'hostBkpDir'} . "/*/" . $currentBkp->{'uuid'} . ".xb." . $compSuffix);
     $bkpFile = $files[0];
     
     if( ! -f $bkpFile ) {

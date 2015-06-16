@@ -33,7 +33,7 @@ sub backup() {
 
     my $dateTime = DateTime->now();
     my $now = $dateTime->ymd('-') . 'T' . $dateTime->hms('-');
-    my $bkpDir = $self->{'hostBkpDir'} . "/" . $now;
+    my $bkpDir = $params{'hostBkpDir'} . "/" . $now;
 
     $self->log('base')->info("Creating backup directory for local backup:", $bkpDir);
 
@@ -41,10 +41,10 @@ sub backup() {
     
     my $bkpFileName = $bkpDir . "/" . $now . ".xb." . $compSuffix;
 
-    my $fullBkpCmd = "innobackupex --user=" . $self->{'user'};
-    $fullBkpCmd .= " --history --stream=xbstream --host=" . $self->{'host'};
-    $fullBkpCmd .= " --password='$self->{'pass'}' " . $self->{'hostBkpDir'};
-    $fullBkpCmd .= " --socket=" . $self->{'socket'};
+    my $fullBkpCmd = "innobackupex --user=" . $params{'user'};
+    $fullBkpCmd .= " --history --stream=xbstream --host=" . $params{'host'};
+    $fullBkpCmd .= " --password='$params{'pass'}' " . $params{'hostBkpDir'};
+    $fullBkpCmd .= " --socket=" . $params{'socket'};
     $fullBkpCmd .= "| " . $compUtil . " > " . $bkpFileName;
 
     $self->log('base')->info("Backing up");
@@ -54,7 +54,7 @@ sub backup() {
 
     $shell->fatal($result);
 
-    $self->log('base')->info("Full backup of host $self->{'host'} to $self->{'hostBkpDir'} on socket $self->{'socket'} to file $bkpFileName successful");
+    $self->log('base')->info("Full backup of host $params{'host'} to $params{'hostBkpDir'} on socket $params{'socket'} to file $bkpFileName successful");
 
     my $lastBkpInfo = $self->getLastBkpInfo();
 
@@ -98,7 +98,7 @@ sub restore() {
 
     mkdir $restoreLocation;
 
-    my @files = glob($self->{'hostBkpDir'} . "/*/" . $uuid . ".xb." . $compSuffix);
+    my @files = glob($params{'hostBkpDir'} . "/*/" . $uuid . ".xb." . $compSuffix);
     my $bkpFile = $files[0];
 
     if( ! -f $bkpFile ) {

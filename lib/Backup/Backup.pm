@@ -103,10 +103,12 @@ sub rmt_backup() {
 
     my $self = shift;
     my %params = @_;
-    my $privKeyPath = '/tmp/' . $self->{'host'} . '.priv';
+    my $privKeyPath = '/tmp/' . $params{'host'} . '.priv';
     my $hostInfo = {};
     my @hostsInfo = ();
     my $lastBkpInfo = {};
+    my $compSuffix = $self->{'compressions'}->{$self->{'compression'}};
+    my $compUtil = $self->{'compression'};
     
     $self->log('base')->info("Starting remote backup");
 
@@ -117,7 +119,7 @@ sub rmt_backup() {
 
     $self->{'bkpType'} = $self->getType(%params);
     
-    $self->log('base')->info("Starting remote backup for host alias ", $self->{'host'});
+    $self->log('base')->info("Starting remote backup for host alias ", $params{'host'});
 
     my $dbh = DBI->connect(
                             "dbi:SQLite:dbname=" . $self->{'bkpDb'},
@@ -128,7 +130,7 @@ sub rmt_backup() {
 
     my $query = "SELECT * FROM host JOIN bkpconf";
     $query .= " ON host.host_id=bkpconf.host_id";
-    $query .= " WHERE bkpconf.alias='" . $self->{'host'} . "'";
+    $query .= " WHERE bkpconf.alias='" . $params{'host'} . "'";
 
     @hostsInfo = @{ $dbh->selectall_arrayref($query, { Slice => {} }) };
 
@@ -149,8 +151,8 @@ sub rmt_backup() {
 
     my $dateTime = DateTime->now();
     my $now = $dateTime->ymd('-') . 'T' . $dateTime->hms('-');
-    my $aliasBkpDir = $self->{'bkpDir'} . '/' . $hostInfo->{'alias'} . '/' . $now;
-    my $bkpFileName = $aliasBkpDir . "/" . $now . ".xb.gz";
+    my $aliasBkpDir = $params{'bkpDir'} . '/' . $hostInfo->{'alias'} . '/' . $now;
+    my $bkpFileName = $aliasBkpDir . "/" . $now . ".xb." . $compSuffix;
     
     $self->log('base')->info("Creating directory on server for alias $aliasBkpDir");
 
@@ -201,7 +203,7 @@ sub rmt_backup() {
 
     $dbh->disconnect();
 
-    my $uuidFileName = $aliasBkpDir . "/" . $lastBkpInfo->{'uuid'} . ".xb.gz";
+    my $uuidFileName = $aliasBkpDir . "/" . $lastBkpInfo->{'uuid'} . ".xb." . $compSuffix;
 
     $self->log('base')->info("Renaming $bkpFileName to $uuidFileName");
 
@@ -254,22 +256,22 @@ sub restore() {
     if( $backupsInfo->{$uuid}->{'incremental'} eq 'Y' ) {
         $self->{'bkpType'} = $self->getType(
                                             'bkpType' => 'incremental',
-                                            'bkpDir' => $self->{'bkpDir'}, 
-                                            'host' => $self->{'host'},
-                                            'hostBkpDir' => $self->{'hostBkpDir'},
-                                            'user' => $self->{'user'},
-                                            'pass' => $self->{'pass'},
-                                            'socket' => $self->{'socket'}
+                                            'bkpDir' => $params{'bkpDir'}, 
+                                            'host' => $params{'host'},
+                                            'hostBkpDir' => $params{'hostBkpDir'},
+                                            'user' => $params{'user'},
+                                            'pass' => $params{'pass'},
+                                            'socket' => $params{'socket'}
                                         );
     } else {
         $self->{'bkpType'} = $self->getType(
                                             'bkpType' => 'full',
-                                            'bkpDir' => $self->{'bkpDir'}, 
-                                            'host' => $self->{'host'},
-                                            'hostBkpDir' => $self->{'hostBkpDir'},
-                                            'user' => $self->{'user'},
-                                            'pass' => $self->{'pass'},
-                                            'socket' => $self->{'socket'}
+                                            'bkpDir' => $params{'bkpDir'}, 
+                                            'host' => $params{'host'},
+                                            'hostBkpDir' => $params{'hostBkpDir'},
+                                            'user' => $params{'user'},
+                                            'pass' => $params{'pass'},
+                                            'socket' => $params{'socket'}
                                         );
     } # if
     
@@ -318,22 +320,22 @@ sub restore_rmt() {
     if( $backupsInfo->{$uuid}->{'incremental'} eq 'Y' ) {
         $self->{'bkpType'} = $self->getType(
                                             'bkpType' => 'incremental',
-                                            'bkpDir' => $self->{'bkpDir'}, 
-                                            'host' => $self->{'host'},
-                                            'hostBkpDir' => $self->{'hostBkpDir'},
-                                            'user' => $self->{'user'},
-                                            'pass' => $self->{'pass'},
-                                            'socket' => $self->{'socket'}
+                                            'bkpDir' => $params{'bkpDir'}, 
+                                            'host' => $params{'host'},
+                                            'hostBkpDir' => $params{'hostBkpDir'},
+                                            'user' => $params{'user'},
+                                            'pass' => $params{'pass'},
+                                            'socket' => $params{'socket'}
                                         );
     } else {
         $self->{'bkpType'} = $self->getType(
                                             'bkpType' => 'full',
-                                            'bkpDir' => $self->{'bkpDir'}, 
-                                            'host' => $self->{'host'},
-                                            'hostBkpDir' => $self->{'hostBkpDir'},
-                                            'user' => $self->{'user'},
-                                            'pass' => $self->{'pass'},
-                                            'socket' => $self->{'socket'}
+                                            'bkpDir' => $params{'bkpDir'}, 
+                                            'host' => $params{'host'},
+                                            'hostBkpDir' => $params{'hostBkpDir'},
+                                            'user' => $params{'user'},
+                                            'pass' => $params{'pass'},
+                                            'socket' => $params{'socket'}
                                         );
     } # if
     
@@ -370,7 +372,9 @@ sub dump_rmt() {
     my $location = $params{'location'};
     my $databases = $params{'dbname'};
     my @databases = split(",", $databases);
-
+    my $compSuffix = $self->{'compressions'}->{$self->{'compression'}};
+    my $compUtil = $self->{'compression'};
+    
     $self->log('base')->info("Starting remote dump of backup with uuid ", $params{'uuid'});
 
     my $stopDb = "service mysql stop";
@@ -423,7 +427,7 @@ sub dump_rmt() {
         my $dbsOpt = '';
 
         my $dumpDbPath = $location . "/" . $startTime;
-        my $dumpDbFile = $dumpDbPath . "/" . $db . ".lzma";
+        my $dumpDbFile = $dumpDbPath . "/" . $db . "." . $compSuffix;
 
         if( $db eq 'all' ) {
             $dbsOpt = '--all-databases'
@@ -434,15 +438,15 @@ sub dump_rmt() {
         $self->log('base')->info("Mysql dump of database: ", $db);
 
         my $dumpDbCmd = "mysqldump --single-transaction " . $dbsOpt;
-        $dumpDbCmd .= " -u " . $self->{'user'} . " -p\Q$self->{'pass'}\E";
-        $dumpDbCmd .= "|xz -c > " . $dumpDbFile;
+        $dumpDbCmd .= " -u " . $params{'user'} . " -p\Q$params{'pass'}\E";
+        $dumpDbCmd .= "| " . $compUtil . " -c > " . $dumpDbFile;
 
         $self->log('base')->info("Creating directory for dump: ", $dumpDbPath);
 
         mkpath($dumpDbPath) if ! -d $dumpDbPath;
 
         try {
-            $result = $shell->execCmd('cmd' => $dumpDbCmd, 'cmdsNeeded' => [ 'mysqldump', 'xz' ]);
+            $result = $shell->execCmd('cmd' => $dumpDbCmd, 'cmdsNeeded' => [ 'mysqldump', $compUtil ]);
         } catch {
             $self->log->error("Error: ", $result->{'msg'});
             rmtree($dumpDbPath);
@@ -531,9 +535,9 @@ sub getBackupsInfo() {
     my @backupsInfo = ();
 
     my $dbh = DBI->connect(
-                            "DBI:mysql:database=PERCONA_SCHEMA;host=localhost;mysql_socket=" . $self->{'socket'},
-                            $self->{'user'}, 
-                            $self->{'pass'},
+                            "DBI:mysql:database=PERCONA_SCHEMA;host=localhost;mysql_socket=" . $params{'socket'},
+                            $params{'user'}, 
+                            $params{'pass'},
                             {'RaiseError' => 1}
                         );
 
@@ -586,37 +590,6 @@ sub getRmtBackupsInfo() {
 
 } # end sub getRmtBackupsInfo
 
-sub findBkpBy() {
-
-    my $self = shift;
-    my %params = @_;
-    my $info = ();
-    my $cond = '';
-
-    my $dbh = DBI->connect(
-                        "DBI:mysql:database=PERCONA_SCHEMA;host=localhost;mysql_socket=" . $self->{'socket'},
-                        $self->{'user'}, 
-                        $self->{'pass'},
-                        {'RaiseError' => 1}
-                    );
-                    
-    for my $key(keys %params) {
-        $cond .= " " . $key . '=' . $params{$key} . " AND";
-    } # for
-
-    $cond =~ s/(.*)AND$/$1/;
-
-    my $query = "SELECT * FROM PERCONA_SCHEMA.xtrabackup_history";
-    $query .= " WHERE " . $cond;
-
-    my @backupsInfo = @{ $dbh->selectall_arrayref($query, { Slice => {} }) };
-
-    $dbh->disconnect();
-
-    return $backupsInfo[0];
-
-} # end sub findBkpBy
-
 =item C<getType>
 
 Method generates appropriate backup type object on which we execute actions,
@@ -636,26 +609,26 @@ return:
 
 sub getType() {
 
-	my $self = shift;
-	my %params = @_;
-	my $type = $params{'bkpType'};
-	my $class = ref $self;
-	
-	$type = ucfirst($type);
-	
-	my $produceClass = 'Backup::Type::' . $type;
-	
+    my $self = shift;
+    my %params = @_;
+    my $type = $params{'bkpType'};
+    my $class = ref $self;
+
+    $type = ucfirst($type);
+
+    my $produceClass = 'Backup::Type::' . $type;
+
     $self->log('debug')->debug("Producing new instance of type", $produceClass);
 
-	my $module = $produceClass ;
-	$produceClass  =~ s/\:\:/\//g;
-	
-	require "$produceClass.pm";
-	$module->import();
-	
-	my $object = $module->new(@_);
-	
-	return $object;
+    my $module = $produceClass ;
+    $produceClass  =~ s/\:\:/\//g;
+
+    require "$produceClass.pm";
+    $module->import();
+
+    my $object = $module->new(@_);
+
+    return $object;
 	
 } # end sub getType
 
