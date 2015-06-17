@@ -11,8 +11,11 @@ package Backup::Backup;
                                     );
     
     $backupObj->backup(     
-                            'user' => 'usss',
-                            'pass' => 'papa',
+                            'bkpType' => 'full'
+                            'user' => 'backuper',
+                            'host' => 'host1',
+                            'bkpDir' => '/backups',
+                            'hostBkpDir' => '/backups/host1'
                         );
 
 =cut
@@ -41,18 +44,14 @@ with 'Backup::BackupInterface', 'MooseX::Log::Log4perl';
 
 =item C<backup>
 
-Method backup gets proper backup type object and executes backup method on that
-object
+Method is proxy method, backup gets proper backup type object 
+and executes backup method on that object
 
 param:
 
     bkpType string - requried parameter, backup type to execute
-
-    user string - required parameter, database user
-
-    pass string - required parameter, database password
     
-    uuid string - required parameter, backup uuid
+    %params - all remaining params, these are passed to produced objects
 
 return:
 
@@ -67,9 +66,9 @@ sub backup() {
 
     $self->log('base')->info("Starting local backup");
 
-    if( !( defined $params{'bkpType'} && defined $params{'user'} && defined $params{'pass'} ) ) {
-        $self->log->error("You need to specify type, user, pass!");
-        croak "You need to specify type, user, pass!";
+    if( !( defined $params{'bkpType'} ) ) {
+        $self->log->error("You need to specify type!");
+        croak "You need to specify type!";
     } # if
 
     $self->{'bkpType'} = $self->getType(%params);
@@ -85,13 +84,14 @@ we execute this method
 
 param:
 
-    bkpType string - requried parameter, backup type to execute
-
     user string - required parameter, database user
+    
+    host string - required parameter, host where execute remote backup
 
     pass string - required parameter, database password
     
-    uuid string - required parameter, backup uuid
+    bkpDir string - required parameter, directory where backup will be stored
+                    on server
     
 return:
 
@@ -225,6 +225,13 @@ param:
     
     uuid string - required parameter, backup uuid
 
+    bkpDir string - directory where backups will be stored
+    
+    host string - host name for which we want to execute restore
+    
+    hostBkpDir string - this is bkpDir plus host, gives directory where backup
+                        for specific host is stored
+    
 return:
 
     void
@@ -286,7 +293,14 @@ sub restore() {
 param:
     
     uuid string - required parameter, backup uuid
-
+    
+    bkpDir string - directory where backups will be stored, on server
+    
+    host string - host name for which we want to execute restore
+    
+    hostBkpDir string - this is bkpDir plus host, gives directory where backup
+                        for specific host is stored
+                        
 return:
 
     return hash_ref - information about restored backup
@@ -354,10 +368,18 @@ remote host
 
 param:
     
+    uuid string - required parameter, backup uuid
+    
     location string - required parameter, location where db backup will be 
                     restored and dumped
     
-    dbname string - required parameter, names of databases to dump
+    dbname string - required parameter, names of databases to dump, you can pass
+                    all - for all databases
+    
+    user string - user name for mysql user, used to dump passed databases on server
+                  from which remote backups are done
+    
+    pass string - password for user
     
 return:
 
@@ -521,6 +543,13 @@ Method get information about all local backups
 
 param:
 
+    user string - user to get info about backups, this database is local
+                  for each backuped host
+    
+    pass string - password for user
+    
+    socket string - socket on which database server is running
+    
 return:
 
     $backupsInfo array_ref - list of hashes of all backups
@@ -554,7 +583,8 @@ sub getBackupsInfo() {
 
 =item C<getRmtBackupsInfo>
 
-Method gets information about all remote backups, this info are stored in local
+Method gets information about all remote backups, this info is copied from local
+database on remote backuped host and copied after backup and stored in local
 database on server where rmt_backup was executed
 
 param:
@@ -562,6 +592,7 @@ param:
 return:
 
     $backupsInfo array_ref - list of all backup info
+    
 =cut
 
 sub getRmtBackupsInfo() {
