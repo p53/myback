@@ -65,7 +65,7 @@ sub execCmd($$) {
         $fullCmd = 'nohup ' . $fullCmd; 
     } # if
 
-    if( defined $params{'$bg'} ) {
+    if( defined $params{'bg'} ) {
         $fullCmd = $fullCmd . ' &';
     } # if
 

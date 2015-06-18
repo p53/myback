@@ -380,24 +380,22 @@ sub dump_rmt() {
     my @databases = split(",", $databases);
     my $compSuffix = $self->{'compressions'}->{$self->{'compression'}};
     my $compUtil = $self->{'compression'};
+    my $timeout = 60;
     
     $self->log('base')->info("Starting remote dump of backup with uuid ", $params{'uuid'});
 
-    my $statusDb = "mysqladmin -u " . $params{'user'} . " -p\Q$params{'pass'}\E ping";
     my $stopDb = "service mysql stop";
-    my $startDb = "service mysql start";
-
+    my $startDb = "mysqld_safe --defaults-file=" . $location . "/backup-my.cnf";
+    $startDb .= " --datadir=" . $location;
+    
     $self->log('base')->info("Checking mysql status");
 
     my $shell = Term::Shell->new();
-    my $result = $shell->execCmd('cmd' => $statusDb, 'cmdsNeeded' => [ 'mysqladmin' ]);
+    my $result = '';
     
-    if( $result->{'returnCode'} == 0 ) {
+    if( -S $params{'socket'} ) {
         $self->log('base')->info("Stoping mysql server");
-
-        my $shell = Term::Shell->new();
-        my $result = $shell->execCmd('cmd' => $stopDb, 'cmdsNeeded' => [ 'service' ]);
-
+        $result = $shell->execCmd('cmd' => $stopDb, 'cmdsNeeded' => [ 'service' ]);
         $shell->fatal($result);
     } # if
 
@@ -416,6 +414,8 @@ sub dump_rmt() {
         die $error;
     }; # try
 
+    my $stopDbSafe = "mysqladmin -u " . $backupInfo->{'user'} . " -p\Q$backupInfo->{'pass'}\E shutdown";
+        
     my $uid = getpwnam('mysql');
     my $gid = getgrnam('mysql');
 
@@ -428,11 +428,29 @@ sub dump_rmt() {
         "$location"
     );
 
-    $self->log('base')->info("Starting mysql server");
+    $self->log('base')->info("Starting mysql server with innobackupex .cnf file");
 
-    $result = $shell->execCmd('cmd' => $startDb, 'cmdsNeeded' => [ 'service' ]);
+    $result = $shell->execCmd('cmd' => $startDb, 'cmdsNeeded' => [ 'mysqld_safe' ], 'bg' => 1);
     $shell->fatal($result);
-
+    
+    $self->log('base')->info("Waiting for server start ", $timeout, ' seconds');
+    
+    my $loop = 0;
+    
+    while( $loop <= $timeout ) {
+    
+        if( -S $params{'socket'} ) {
+            last;
+        } elsif( $loop == $timeout ) {
+            $self->log->error("Failed to start mysql server!");
+            croak "Failed to start mysql server!";
+        } # if
+        
+        sleep 1;
+        $loop++;
+        
+    } # while
+    
     for my $db(@databases) {
 
         my $startTime = $backupInfo->{'start_time'};
@@ -452,7 +470,7 @@ sub dump_rmt() {
         $self->log('base')->info("Mysql dump of database: ", $db);
 
         my $dumpDbCmd = "mysqldump --single-transaction " . $dbsOpt;
-        $dumpDbCmd .= " -u " . $params{'user'} . " -p\Q$params{'pass'}\E";
+        $dumpDbCmd .= " -u " . $backupInfo->{'user'} . " -p\Q$backupInfo->{'pass'}\E";
         $dumpDbCmd .= "| " . $compUtil . " -c > " . $dumpDbFile;
 
         $self->log('base')->info("Creating directory for dump: ", $dumpDbPath);
@@ -461,6 +479,7 @@ sub dump_rmt() {
 
         try {
             $result = $shell->execCmd('cmd' => $dumpDbCmd, 'cmdsNeeded' => [ 'mysqldump', $compUtil ]);
+            $shell->fatal($result);
         } catch {
             $self->log->error("Error: ", $result->{'msg'});
             rmtree($dumpDbPath);
@@ -469,6 +488,13 @@ sub dump_rmt() {
 
     } # for
 
+    $self->log('base')->info("Stopping mysql server");
+
+    my $shell = Term::Shell->new();
+    my $result = $shell->execCmd('cmd' => $stopDbSafe, 'cmdsNeeded' => [ 'mysqladmin' ]);
+
+    $shell->fatal($result);
+        
     $self->log('base')->info("Dump successful");
 
 } # end sub dump_rmt

@@ -109,7 +109,7 @@ if( $action eq 'dump' && !($dir && $location && $dbname && $host) ) {
 pod2usage(1) if ( $action eq 'rmt_backup' && !($dir && $host && $type) );
 pod2usage(1) if ( $action eq 'list_rmt' && !($dir && $format) );
 pod2usage(1) if ( $action eq 'restore_rmt' && !($dir && $host && $id && $location) );
-pod2usage(1) if ( $action eq 'dump_rmt' && !($dir && $host && $id && $location && $user && $pass && $dbname) );
+pod2usage(1) if ( $action eq 'dump_rmt' && !($dir && $host && $id && $location && $dbname) );
 
 my $hostBkpDir = $dir . "/" . $host;
 
