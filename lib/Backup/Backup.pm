@@ -6,9 +6,7 @@ package Backup::Backup;
 
 =head1 SYNOPSIS
 
-    my $backupObj = Backup::Backup->new(
-                                        'bkpDir' => '/mnt/backups'
-                                    );
+    my $backupObj = Backup::Backup->new();
     
     $backupObj->backup(     
                             'bkpType' => 'full'
@@ -223,7 +221,7 @@ Method restores backup on host where we execute this method
 
 param:
     
-    uuid string - required parameter, backup uuid
+    uuid string - parameter, backup uuid
 
     bkpDir string - directory where backups will be stored
     
@@ -231,6 +229,12 @@ param:
     
     hostBkpDir string - this is bkpDir plus host, gives directory where backup
                         for specific host is stored
+    
+    user string - user for mysql database on local backuped host
+    
+    pass string - password for user
+    
+    socket string - optional parameter, path to the mysql socket
     
 return:
 
@@ -244,10 +248,14 @@ sub restore() {
     my %params = @_;
     my $uuid = $params{'uuid'};
     my $backupsInfo = {};
-
+    
     $self->log('base')->info("Starting local restore of backups with uuid ", $uuid);
     
-    my $allBackups = $self->getBackupsInfo();
+    my $allBackups = $self->getBackupsInfo(
+                                            'user' => $params{'user'},
+                                            'pass' => $params{'pass'},
+                                            'socket' => $params{'socket'}
+                                        );
 
     $self->log('debug')->debug("Dumping all backups info", , sub { Dumper($allBackups) });
 
@@ -262,23 +270,11 @@ sub restore() {
 
     if( $backupsInfo->{$uuid}->{'incremental'} eq 'Y' ) {
         $self->{'bkpType'} = $self->getType(
-                                            'bkpType' => 'incremental',
-                                            'bkpDir' => $params{'bkpDir'}, 
-                                            'host' => $params{'host'},
-                                            'hostBkpDir' => $params{'hostBkpDir'},
-                                            'user' => $params{'user'},
-                                            'pass' => $params{'pass'},
-                                            'socket' => $params{'socket'}
+                                            'bkpType' => 'incremental'
                                         );
     } else {
         $self->{'bkpType'} = $self->getType(
-                                            'bkpType' => 'full',
-                                            'bkpDir' => $params{'bkpDir'}, 
-                                            'host' => $params{'host'},
-                                            'hostBkpDir' => $params{'hostBkpDir'},
-                                            'user' => $params{'user'},
-                                            'pass' => $params{'pass'},
-                                            'socket' => $params{'socket'}
+                                            'bkpType' => 'full'
                                         );
     } # if
     
@@ -316,7 +312,7 @@ sub restore_rmt() {
 
     $self->log('base')->info("Starting remote restore of backups with uuid ", $uuid);
 
-    my $allBackups = $self->getRmtBackupsInfo();
+    my $allBackups = $self->getRmtBackupsInfo('uuid' => $uuid);
 
     $self->log('debug')->debug("Dumping all backups info", , sub { Dumper($allBackups) });
 
@@ -333,23 +329,11 @@ sub restore_rmt() {
 
     if( $backupsInfo->{$uuid}->{'incremental'} eq 'Y' ) {
         $self->{'bkpType'} = $self->getType(
-                                            'bkpType' => 'incremental',
-                                            'bkpDir' => $params{'bkpDir'}, 
-                                            'host' => $params{'host'},
-                                            'hostBkpDir' => $params{'hostBkpDir'},
-                                            'user' => $params{'user'},
-                                            'pass' => $params{'pass'},
-                                            'socket' => $params{'socket'}
+                                            'bkpType' => 'incremental'
                                         );
     } else {
         $self->{'bkpType'} = $self->getType(
-                                            'bkpType' => 'full',
-                                            'bkpDir' => $params{'bkpDir'}, 
-                                            'host' => $params{'host'},
-                                            'hostBkpDir' => $params{'hostBkpDir'},
-                                            'user' => $params{'user'},
-                                            'pass' => $params{'pass'},
-                                            'socket' => $params{'socket'}
+                                            'bkpType' => 'full'
                                         );
     } # if
     
@@ -399,15 +383,23 @@ sub dump_rmt() {
     
     $self->log('base')->info("Starting remote dump of backup with uuid ", $params{'uuid'});
 
+    my $statusDb = "mysqladmin -u " . $params{'user'} . " -p\Q$params{'pass'}\E ping";
     my $stopDb = "service mysql stop";
     my $startDb = "service mysql start";
 
-    $self->log('base')->info("Stoping mysql server");
+    $self->log('base')->info("Checking mysql status");
 
     my $shell = Term::Shell->new();
-    my $result = $shell->execCmd('cmd' => $stopDb, 'cmdsNeeded' => [ 'service' ]);
+    my $result = $shell->execCmd('cmd' => $statusDb, 'cmdsNeeded' => [ 'mysqladmin' ]);
+    
+    if( $result->{'returnCode'} == 0 ) {
+        $self->log('base')->info("Stoping mysql server");
 
-    $shell->fatal($result);
+        my $shell = Term::Shell->new();
+        my $result = $shell->execCmd('cmd' => $stopDb, 'cmdsNeeded' => [ 'service' ]);
+
+        $shell->fatal($result);
+    } # if
 
     $self->log('base')->info("Removing $location");
 
@@ -419,7 +411,7 @@ sub dump_rmt() {
         $backupInfo = $self->restore_rmt(%params);
     } catch {
         mkpath($location) if ! -d $location;
-        my $error = $@ || 'unknown error';
+        my $error = $_ || 'unknown error';
         $self->log->error("Error: ", $error);
         die $error;
     }; # try
@@ -502,7 +494,11 @@ sub list() {
     my $format = $params{'format'};
 
     # getting information about backups
-    my $data = $self->getBackupsInfo();
+    my $data = $self->getBackupsInfo(
+                                        'user' => $params{'user'},
+                                        'pass' => $params{'pass'},
+                                        'socket' => $params{'socket'}
+                                    );
     
     $self->$format('data' => $data);
 
@@ -562,6 +558,8 @@ sub getBackupsInfo() {
     my %params = @_;
 
     my @backupsInfo = ();
+    
+    $self->log('debug')->debug("Getting backups info with params: ", , sub { Dumper(\%params) });
 
     my $dbh = DBI->connect(
                             "DBI:mysql:database=PERCONA_SCHEMA;host=localhost;mysql_socket=" . $params{'socket'},
@@ -573,6 +571,8 @@ sub getBackupsInfo() {
     my $query = "SELECT * FROM PERCONA_SCHEMA.xtrabackup_history";
     $query .= " ORDER BY innodb_to_lsn ASC, start_time ASC";
 
+    $self->log('debug')->debug("Query: ", $query);
+    
     @backupsInfo = @{ $dbh->selectall_arrayref($query, { Slice => {} }) };
 
     $dbh->disconnect();
@@ -599,8 +599,10 @@ sub getRmtBackupsInfo() {
 
     my $self = shift;
     my %params = @_;
-
+    my $uuid = $params{'uuid'};
     my @backupsInfo = ();
+
+    $self->log('debug')->debug("Getting remotee backups info with params: ", , sub { Dumper(\%params) });
 
     my $dbh = DBI->connect(
                             "dbi:SQLite:dbname=" . $self->{'bkpDb'},
@@ -608,11 +610,19 @@ sub getRmtBackupsInfo() {
                             "",
                             {'RaiseError' => 1}
                         );
-
+    
     my $query = "SELECT * FROM host JOIN bkpconf JOIN history";
     $query .= " ON host.host_id=bkpconf.host_id";
     $query .= " AND bkpconf.bkpconf_id=history.bkpconf_id";
-
+    
+    if( $uuid ) {
+        my $subQuery = "SELECT bkpconf.bkpconf_id FROM bkpconf JOIN history";
+        $subQuery .= " on bkpconf.bkpconf_id=history.bkpconf_id WHERE uuid='" . $uuid . "'";
+        $query .= " AND bkpconf.bkpconf_id IN (" . $subQuery .")";
+    } # if
+    
+    $self->log('debug')->debug("Query: ", $query);
+    
     @backupsInfo = @{ $dbh->selectall_arrayref($query, { Slice => {} }) };
 
     $dbh->disconnect();

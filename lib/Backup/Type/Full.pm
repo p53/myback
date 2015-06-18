@@ -56,7 +56,11 @@ sub backup() {
 
     $self->log('base')->info("Full backup of host $params{'host'} to $params{'hostBkpDir'} on socket $params{'socket'} to file $bkpFileName successful");
 
-    my $lastBkpInfo = $self->getLastBkpInfo();
+    my $lastBkpInfo = $self->getLastBkpInfo(
+                                                'user' => $params{'user'},
+                                                'pass' => $params{'pass'},
+                                                'socket' => $params{'socket'}
+                                            );
 
     $self->log('debug')->debug("Dumping last backup info: ", sub { Dumper($lastBkpInfo) });
 
@@ -89,14 +93,10 @@ sub restore() {
     my $compUtil = $self->{'compression'};
     my $result = {};
 
-    if( -d $restoreLocation ) {
-        $self->log->error("Restore location already exists!");
-        croak "Restore location already exists!";
+    if( ! -d $restoreLocation ) {
+        $self->log('base')->info("Creating restore directory $restoreLocation");
+        mkpath($restoreLocation);
     } # if
-
-    $self->log('base')->info("Creating restore directory $restoreLocation");
-
-    mkdir $restoreLocation;
 
     my @files = glob($params{'hostBkpDir'} . "/*/" . $uuid . ".xb." . $compSuffix);
     my $bkpFile = $files[0];

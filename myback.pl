@@ -89,7 +89,6 @@ GetOptions(
 pod2usage(-verbose => 3) if $help;
 pod2usage(1) if !$action;
 pod2usage(1) if !$dir;
-pod2usage(1) if !$host;
 
 pod2usage(-verbose => 3) if !defined( $allowedActions->{$action} );
 
@@ -108,7 +107,7 @@ if( $action eq 'dump' && !($dir && $location && $dbname && $host) ) {
 } # if
 
 pod2usage(1) if ( $action eq 'rmt_backup' && !($dir && $host && $type) );
-pod2usage(1) if ( $action eq 'list_rmt' && !($dir && $host && $format) );
+pod2usage(1) if ( $action eq 'list_rmt' && !($dir && $format) );
 pod2usage(1) if ( $action eq 'restore_rmt' && !($dir && $host && $id && $location) );
 pod2usage(1) if ( $action eq 'dump_rmt' && !($dir && $host && $id && $location && $user && $pass && $dbname) );
 
@@ -131,15 +130,10 @@ my %params = (
 $dbgLogger->debug("Dumping parameters: ", sub { Dumper(\%params) } );
 $dbgLogger->debug("Starting action:", $action);
 
-my $backupObj = Backup::Backup->new(
-                                    'bkpDir' => $dir, 
-                                    'host' => $host,
-                                    'hostBkpDir' => $hostBkpDir,
-                                    'user' => $user,
-                                    'pass' => $pass,
-                                    'socket' => $socket
-                                );
+my $backupObj = Backup::Backup->new();
 
+$params{'socket'} = $socket ? $socket : $backupObj->{'socket'};
+    
 $backupObj->$action(%params);
 
 __END__

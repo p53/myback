@@ -15,7 +15,7 @@ use YAML::Tiny;
 
 use Term::Shell;
 
-with 'Backup::BackupInterface', 'MooseX::Log::Log4perl';;
+with 'Backup::BackupInterface', 'MooseX::Log::Log4perl';
 
 sub backup() {
 
@@ -35,7 +35,11 @@ sub backup() {
         croak "$params{'hostBkpDir'} does not exist, incremental backup needs previous backup!";
     } # if
 
-    my $lastBkpInfo = $self->getLastBkpInfo();
+    my $lastBkpInfo = $self->getLastBkpInfo(
+                                                'user' => $params{'user'},
+                                                'pass' => $params{'pass'},
+                                                'socket' => $params{'socket'}
+                                            );
 
     $self->log('debug')->debug("Dumping last backup info before backup: ", sub { Dumper($lastBkpInfo) });
 
@@ -51,7 +55,7 @@ sub backup() {
 
     # preparing and executing tool incremental command
     # incremental-force-scan is requisite because backup without scan is
-    # implemented only by percona mysql version
+    # implemented only in versions higher than 5.1
     my $bkpCmd = "innobackupex --incremental --user=" . $params{'user'};
     $bkpCmd .= " --history --stream=xbstream --host=" . $params{'host'};
     $bkpCmd .= " --password='$params{'pass'}' --incremental-force-scan";
@@ -67,7 +71,11 @@ sub backup() {
 
     $shell->fatal($result);
 
-    $lastBkpInfo = $self->getLastBkpInfo();
+    $lastBkpInfo = $self->getLastBkpInfo(
+                                            'user' => $params{'user'},
+                                            'pass' => $params{'pass'},
+                                            'socket' => $params{'socket'}
+                                        );
 
     $self->log('debug')->debug("Dumping last backup info after backup: ", sub { Dumper($lastBkpInfo) });
 
@@ -102,9 +110,9 @@ sub restore() {
     my $compUtil = $self->{'compression'};
     my $result = {};
    
-    if( -d $restoreLocation ) {
-        $self->log->error("Restore location already exists!");
-        croak "Restore location already exists!";
+    if( ! -d $restoreLocation ) {
+        $self->log('base')->info("Creating restore directory $restoreLocation");
+        mkdir $restoreLocation;
     } # if
 
     my $chain = [];
@@ -124,7 +132,10 @@ sub restore() {
 
     $self->log('base')->info("Creating restore directory $restoreLocation");
 
-    mkdir $restoreLocation;
+    if( ! -d $restoreLocation ) {
+        $self->log('base')->info("Creating restore directory $restoreLocation");
+        mkpath($restoreLocation);
+    } # if
 
     my @files = glob($params{'hostBkpDir'} . "/*/" . $fullBkp->{'uuid'} . ".xb." . $compSuffix);
     my $bkpFile = $files[0];

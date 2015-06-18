@@ -17,15 +17,9 @@ use Data::Dumper;
 use DBI;
 use XML::LibXML;
 
-subtype 'DirectoryExists',
-    => as 'Str'
-    => where { -d $_ }
-    => message { "Directory $_ does not exist!" };
-
 has 'bkpDir' => (
     is => 'rw',
-    isa => 'DirectoryExists',
-    required => 1
+    isa => 'Str'
 );
 
 has 'bkpType' => (
@@ -65,7 +59,7 @@ has 'dbname' => (
 has 'socket' => (
     is => 'rw',
     isa => 'Str',
-    default => '/var/run/mysql/mysqld.sock'
+    default => '/var/run/mysqld/mysqld.sock'
 );
 
 has 'bkpDb' => (
