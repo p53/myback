@@ -163,12 +163,19 @@ sub rmt_backup() {
     chmod 0600, $privKeyPath;
 
     my $shell = Term::Shell->new();
+    my $result = '';
     
-    my $result = $self->{'bkpType'}->rmt_backup(
-                                    'hostInfo' => $hostInfo, 
-                                    'privKeyPath' => $privKeyPath,
-                                    'bkpFileName' => $bkpFileName
-                                );
+    try{
+        $result = $self->{'bkpType'}->rmt_backup(
+                                        'hostInfo' => $hostInfo, 
+                                        'privKeyPath' => $privKeyPath,
+                                        'bkpFileName' => $bkpFileName
+                                    );
+    } catch {
+        File::Path::remove_tree($aliasBkpDir . "/" . $now);
+        $self->log->error("Shell command failed! Message: ", $result->{'msg'});
+        croak "Shell command failed! Message: " . $result->{'msg'};
+    }; # try
 
     my $lastBkpInfoCmd = "ssh -i " . $privKeyPath . " " . $hostInfo->{'ip'} . " '";
     $lastBkpInfoCmd .= 'mysql -e "select * from PERCONA_SCHEMA.xtrabackup_history';

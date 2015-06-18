@@ -41,19 +41,26 @@ sub backup() {
     
     my $bkpFileName = $bkpDir . "/" . $now . ".xb." . $compSuffix;
 
-    my $fullBkpCmd = "innobackupex --user=" . $params{'user'};
-    $fullBkpCmd .= " --history --stream=xbstream --host=" . $params{'host'};
-    $fullBkpCmd .= " --password='$params{'pass'}' " . $params{'hostBkpDir'};
-    $fullBkpCmd .= " --socket=" . $params{'socket'};
-    $fullBkpCmd .= "| " . $compUtil . " > " . $bkpFileName;
+    my $bkpCmd = "innobackupex --user=" . $params{'user'};
+    $bkpCmd .= " --history --stream=xbstream --host=" . $params{'host'};
+    $bkpCmd .= " --password='$params{'pass'}' " . $params{'hostBkpDir'};
+    $bkpCmd .= " --socket=" . $params{'socket'};
+    $bkpCmd .= "| " . $compUtil . " > " . $bkpFileName;
 
     $self->log('base')->info("Backing up");
 
     my $shell = Term::Shell->new();
-    my $result = $shell->execCmd('cmd' => $fullBkpCmd, 'cmdsNeeded' => [ 'innobackupex', $compUtil ]);
-
-    $shell->fatal($result);
-
+    my $result = '';
+    
+    try{
+        $result = $shell->execCmd('cmd' => $bkpCmd, 'cmdsNeeded' => [ 'innobackupex', $compUtil ]);
+        $shell->fatal($result);
+    } catch {
+        File::Path::remove_tree($bkpDir . "/" . $now);
+        $self->log->error("Shell command failed! Message: ", $result->{'msg'});
+        croak "Shell command failed! Message: " . $result->{'msg'};
+    }; # try
+    
     $self->log('base')->info("Full backup of host $params{'host'} to $params{'hostBkpDir'} on socket $params{'socket'} to file $bkpFileName successful");
 
     my $lastBkpInfo = $self->getLastBkpInfo(

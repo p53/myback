@@ -67,10 +67,17 @@ sub backup() {
     $self->log('base')->info("Backing up");
 
     my $shell = Term::Shell->new();
-    my $result = $shell->execCmd('cmd' => $bkpCmd, 'cmdsNeeded' => [ 'innobackupex', $compUtil ]);
+    my $result = '';
 
-    $shell->fatal($result);
-
+    try{
+        $result = $shell->execCmd('cmd' => $bkpCmd, 'cmdsNeeded' => [ 'innobackupex', $compUtil ]);
+        $shell->fatal($result);
+    } catch {
+        File::Path::remove_tree($bkpDir . "/" . $now);
+        $self->log->error("Shell command failed! Message: ", $result->{'msg'});
+        croak "Shell command failed! Message: " . $result->{'msg'};
+    }; # try
+    
     $lastBkpInfo = $self->getLastBkpInfo(
                                             'user' => $params{'user'},
                                             'pass' => $params{'pass'},
