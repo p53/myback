@@ -1,5 +1,15 @@
 package Backup::BackupInterface;
 
+=head1 NAME
+
+    Backup::BackupInterface - interface for backup object
+
+=head1 SYNOPSIS
+
+    use in classes: with 'Backup::BackupInterface'
+
+=cut
+
 use Moose::Role;
 use namespace::autoclean;
 use Moose::Util::TypeConstraints;
@@ -17,44 +27,25 @@ use Data::Dumper;
 use DBI;
 use XML::LibXML;
 
-has 'bkpDir' => (
-    is => 'rw',
-    isa => 'Str'
-);
+=head1 PUBLIC PROPERTIES
+
+=over 12
+
+=item bkpType Backup::Type::*
+
+    stores backup type object generated during run
+
+=cut
 
 has 'bkpType' => (
     is => 'rw'
 );
 
-has 'hostBkpDir' => (
-    is => 'rw',
-    isa => 'Str'
-);
-
-has 'host' => (
-    is => 'rw',
-    isa => 'Str'
-);
-
-has 'user' => (
-    is => 'rw',
-    isa => 'Str'
-);
-
-has 'pass' => (
-    is => 'rw',
-    isa => 'Str'
-);
-
-has 'location' => (
-    is => 'rw',
-    isa => 'Str'
-);
-
-has 'dbname' => (
-    is => 'rw',
-    isa => 'Str'
-);
+=item socket string
+    
+    stores default path to mysql socket
+    
+=cut
 
 has 'socket' => (
     is => 'rw',
@@ -62,16 +53,37 @@ has 'socket' => (
     default => '/var/run/mysqld/mysqld.sock'
 );
 
+=item bkpDb string
+
+    stores default path to sqlite database, used for storing
+    remote backups information
+    
+=cut
+
 has 'bkpDb' => (
     is => 'rw',
     default => '/var/lib/myback/bkpdb'
 );
+
+=item compression string
+
+    stores current selected type of compression
+    
+=cut
 
 has 'compression' => (
     is => 'rw',
     isa => 'Str',
     default => 'pigz'
 );
+
+=item compressions hash_ref
+
+    hash ref of compression types and their suffixes
+
+=back
+
+=cut
 
 has 'compressions' => (
     is => 'rw',
@@ -85,13 +97,67 @@ has 'compressions' => (
                 }
 );
 
-sub backup() {}
-sub restore() {}
-sub dump_rmt() {}
-sub restore_rmt() {}
-sub list_rmt() {}
+=head1 METHODS
 
-sub getLastBkpInfo() {
+=over 12
+
+=item C<backup>
+
+    Method not implemented
+
+=cut
+
+sub backup {}
+
+=item C<restore>
+
+    Method not implemented
+
+=cut
+
+sub restore {}
+
+=item C<dump_rmt>
+
+    Method not implemented
+    
+=cut
+
+sub dump_rmt {}
+
+=item C<restore_rmt>
+
+    Method not implemented
+    
+=cut
+
+sub restore_rmt {}
+
+=item C<list_rmt>
+
+    Method not implemented
+    
+=cut
+
+sub list_rmt {}
+
+=item C<getLastBkpInfo>
+
+Method gets last backup info according start time from local mysql db
+
+param:
+
+    user string - mysql user for local history database
+    
+    pass string - mysql password for mysql user
+    
+    socket string - path to mysql socket
+    
+return:
+
+=cut
+
+sub getLastBkpInfo {
 
     my $self = shift;
     my %params = @_;
@@ -121,7 +187,21 @@ sub getLastBkpInfo() {
 
 } # end sub getLastBackup
 
-sub bkpInfoTimeToUTC() {
+=item C<bkpInfoTimeToUTC>
+
+Method converts time in backup info hash_ref to UTC
+
+param:
+
+    bkpInfo hash_ref - information about backup
+
+return:
+
+    bkpInfo hash_ref - information about backup with converted times
+    
+=cut
+
+sub bkpInfoTimeToUTC {
 
     my $self = shift;
     my %params = @_;
@@ -163,7 +243,26 @@ sub bkpInfoTimeToUTC() {
     
 } # end sub bkpInfoTimeToUTC
 
-sub rmt_tmp_backup() {
+=item C<rmt_tmp_backup>
+
+Method creates remote backup, stores it on remote host and then copies to
+server from which remote backup was done
+
+param:
+
+    host string - remote host to backup, this is alias
+    
+    bkpDir string - directory where backup will be stored on server
+    
+    bkpType string - this is type of backup we want to execute on remote host
+    
+return:
+
+    void
+    
+=cut
+
+sub rmt_tmp_backup {
 
     my $self = shift;
     my %params = @_;
@@ -297,7 +396,23 @@ sub rmt_tmp_backup() {
 
 } # end sub rmt_tmp_backup
 
-sub mysqlXmlToHash() {
+=item C<mysqlXmlToHash>
+
+Converts mysql xml response to simple hash
+
+param:
+
+    xml string - xml response from mysql server
+    
+return:
+
+    data hash_ref
+    
+=back
+
+=cut
+
+sub mysqlXmlToHash {
 
     my $self = shift;
     my %params = @_;
@@ -320,5 +435,19 @@ sub mysqlXmlToHash() {
 } # end sub mysqlXmlToHash
 
 no Moose::Role;
+
+=head1 AUTHOR
+
+        PAVOL IPOTH <pavol.ipoth@gmail.com>
+
+=head1 COPYRIGHT
+
+        Pavol Ipoth, ALL RIGHTS RESERVED, 2015
+
+=head1 License
+
+        GPLv3
+
+=cut
 
 1;

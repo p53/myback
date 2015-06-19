@@ -22,6 +22,8 @@ use Log::Log4perl qw(:levels);
 
 use Backup::Backup;
 
+# configuring our logger, we have two one for debug output
+# and one for normal output, cause they have different formats
 my $log_conf = $main::scriptPath . "/etc/log.conf";
 Log::Log4perl::init($log_conf);
 
@@ -144,7 +146,7 @@ __END__
 
 =head1 SYNOPSIS
 
-        myback [--help|-h] [--action|-a] action [--dir|-d] path [--host|-h] database_host 
+        myback [--help|-h] [--action|-a] action [--dir|-d] path [--host|-h] host 
                 [--type|-b] backup_type [--user|-u] database_user
                 [--pass|-s] password [--loc|-l] location_of_mysql_dir
                 [--id|-i] id_of_backup [--dbname|-n] database_name
@@ -199,7 +201,7 @@ __END__
     dump_rmt
         dumps backup from remote hosts, stored on server to the location loc
         from dir
-        requires: dir, host, id, location, user, pass, dbname
+        requires: dir, host, id, location, dbname
         optional: socket
         
 =item B<--dir|-d>

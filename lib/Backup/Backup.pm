@@ -58,7 +58,7 @@ return:
 
 =cut
 
-sub backup() {
+sub backup {
 
     my $self = shift;
     my %params = @_;
@@ -98,7 +98,7 @@ return:
     
 =cut
 
-sub rmt_backup() {
+sub rmt_backup {
 
     my $self = shift;
     my %params = @_;
@@ -111,8 +111,8 @@ sub rmt_backup() {
     
     $self->log('base')->info("Starting remote backup");
 
-    if( !( defined $params{'bkpType'} && defined $params{'user'} && defined $params{'pass'} ) ) {
-        $self->log->error("You need to specify type, user, pass!");
+    if( !( defined $params{'user'} && defined $params{'pass'} ) ) {
+        $self->log->error("You need to specify user, pass!");
         croak "You need to specify type, user, pass!";
     } # if
 
@@ -127,6 +127,7 @@ sub rmt_backup() {
                             {'RaiseError' => 1}
                         );
 
+    # getting information about host from db
     my $query = "SELECT * FROM host JOIN bkpconf";
     $query .= " ON host.host_id=bkpconf.host_id";
     $query .= " WHERE bkpconf.alias='" . $params{'host'} . "'";
@@ -178,6 +179,7 @@ sub rmt_backup() {
         croak "Shell command failed! Message: " . $result->{'msg'};
     }; # try
 
+    # getting information about remote backup from remote host
     my $lastBkpInfoCmd = "ssh -i " . $privKeyPath . " " . $hostInfo->{'ip'} . " '";
     $lastBkpInfoCmd .= 'mysql -e "select * from PERCONA_SCHEMA.xtrabackup_history';
     $lastBkpInfoCmd .= ' ORDER BY innodb_to_lsn DESC, start_time DESC LIMIT 1"';
@@ -199,6 +201,7 @@ sub rmt_backup() {
     
     $self->log('base')->info("Starting import info about remote backup");
 
+    # inserting info about backup to backup server database
     my @values = values(%$lastBkpInfo);
     my @escVals = map { my $s = $_; $s = $dbh->quote($s); $s } @values;
 
@@ -232,19 +235,14 @@ Method restores backup on host where we execute this method
 param:
     
     uuid string - parameter, backup uuid
-
-    bkpDir string - directory where backups will be stored
-    
-    host string - host name for which we want to execute restore
-    
-    hostBkpDir string - this is bkpDir plus host, gives directory where backup
-                        for specific host is stored
     
     user string - user for mysql database on local backuped host
     
     pass string - password for user
     
-    socket string - optional parameter, path to the mysql socket
+    socket string - path to the mysql socket
+    
+    %params - all remaining params, these are passed to produced objects
     
 return:
 
@@ -252,7 +250,7 @@ return:
     
 =cut
 
-sub restore() {
+sub restore {
 
     my $self = shift;
     my %params = @_;
@@ -300,20 +298,15 @@ param:
     
     uuid string - required parameter, backup uuid
     
-    bkpDir string - directory where backups will be stored, on server
-    
-    host string - host name for which we want to execute restore
-    
-    hostBkpDir string - this is bkpDir plus host, gives directory where backup
-                        for specific host is stored
-                        
+    %params - all remaining params, these are passed to produced objects
+     
 return:
 
     return hash_ref - information about restored backup
     
 =cut
 
-sub restore_rmt() {
+sub restore_rmt {
 
     my $self = shift;
     my %params = @_;
@@ -322,6 +315,7 @@ sub restore_rmt() {
 
     $self->log('base')->info("Starting remote restore of backups with uuid ", $uuid);
 
+    # getting info about remotly backuped backup from server db
     my $allBackups = $self->getRmtBackupsInfo('uuid' => $uuid);
 
     $self->log('debug')->debug("Dumping all backups info", , sub { Dumper($allBackups) });
@@ -337,6 +331,8 @@ sub restore_rmt() {
 
     my $info = $backupsInfo->{$uuid};
 
+    # if our backup is incremental start restore procedure specific for
+    # incremental otherwise for full
     if( $backupsInfo->{$uuid}->{'incremental'} eq 'Y' ) {
         $self->{'bkpType'} = $self->getType(
                                             'bkpType' => 'incremental'
@@ -362,18 +358,15 @@ remote host
 
 param:
     
-    uuid string - required parameter, backup uuid
+    uuid string - backup uuid
     
-    location string - required parameter, location where db backup will be 
+    location string - location where db backup will be 
                     restored and dumped
     
-    dbname string - required parameter, names of databases to dump, you can pass
+    dbname string - names of databases to dump, you can pass
                     all - for all databases
-    
-    user string - user name for mysql user, used to dump passed databases on server
-                  from which remote backups are done
-    
-    pass string - password for user
+
+    socket string - socket of mysql server to which we are restoring backup
     
 return:
 
@@ -381,7 +374,7 @@ return:
     
 =cut
 
-sub dump_rmt() {
+sub dump_rmt {
     
     my $self = shift;
     my %params = @_;
@@ -403,6 +396,9 @@ sub dump_rmt() {
     my $shell = Term::Shell->new();
     my $result = '';
     
+    # we are checking if some server is running by checking socket file existence
+    # we also assume that on backup server mysql will be run in default mode
+    # so service command will work, we are stopping mysql server
     if( -S $params{'socket'} ) {
         $self->log('base')->info("Stoping mysql server");
         $result = $shell->execCmd('cmd' => $stopDb, 'cmdsNeeded' => [ 'service' ]);
@@ -411,10 +407,12 @@ sub dump_rmt() {
 
     $self->log('base')->info("Removing $location");
 
+    # we remove all files from location where we want to restore
     File::Path::remove_tree($location);
 
     my $backupInfo = {};
 
+    # restoring backup
     try {
         $backupInfo = $self->restore_rmt(%params);
     } catch {
@@ -425,7 +423,8 @@ sub dump_rmt() {
     }; # try
 
     my $stopDbSafe = "mysqladmin -u " . $backupInfo->{'user'} . " -p\Q$backupInfo->{'pass'}\E shutdown";
-        
+    
+    # we change owner of restored files
     my $uid = getpwnam('mysql');
     my $gid = getgrnam('mysql');
 
@@ -440,6 +439,9 @@ sub dump_rmt() {
 
     $self->log('base')->info("Starting mysql server with innobackupex .cnf file");
 
+    # start our own mysql instance with innobackupex cnf config file,
+    # we do it because some parameters on remote host might be different
+    # from backup server and thus preventing start and dump on backup server
     $result = $shell->execCmd('cmd' => $startDb, 'cmdsNeeded' => [ 'mysqld_safe' ], 'bg' => 1);
     $shell->fatal($result);
     
@@ -461,6 +463,7 @@ sub dump_rmt() {
         
     } # while
     
+    # we are dumping each database passed or all databases
     for my $db(@databases) {
 
         my $startTime = $backupInfo->{'start_time'};
@@ -500,6 +503,11 @@ sub dump_rmt() {
 
     $self->log('base')->info("Stopping mysql server");
 
+    # after dump we are stopping database server, because otherwise we would need
+    # to stop it next time, but next time we could not do it with service command
+    # because we started it with mysqld_safe and with mysqladmin we could not
+    # stop it either because we would not know mysql root password of previously 
+    # restored backup
     $shell = Term::Shell->new();
     $result = $shell->execCmd('cmd' => $stopDbSafe, 'cmdsNeeded' => [ 'mysqladmin' ]);
 
@@ -515,6 +523,12 @@ Method lists all local backups in supplied format
 
 param:
 
+    user string - mysql user of local database
+    
+    pass string - mysql password for user
+    
+    socket string - socket for local database server
+    
     format string - one of supported formats of output
 
 return:
@@ -523,7 +537,7 @@ return:
     
 =cut
 
-sub list() {
+sub list {
 
     my $self = shift;
     my %params = @_;
@@ -555,7 +569,7 @@ return:
     
 =cut
 
-sub list_rmt() {
+sub list_rmt {
 
     my $self = shift;
     my %params = @_;
@@ -588,7 +602,7 @@ return:
     
 =cut
 
-sub getBackupsInfo() {
+sub getBackupsInfo {
 
     my $self = shift;
     my %params = @_;
@@ -625,13 +639,16 @@ database on server where rmt_backup was executed
 
 param:
 
+    uuid string - backup uuid, optional
+    
 return:
 
-    $backupsInfo array_ref - list of all backup info
+    $backupsInfo array_ref - list of backup info for specific uuid or all backups
+                             if not specified
     
 =cut
 
-sub getRmtBackupsInfo() {
+sub getRmtBackupsInfo {
 
     my $self = shift;
     my %params = @_;
@@ -647,6 +664,8 @@ sub getRmtBackupsInfo() {
                             {'RaiseError' => 1}
                         );
     
+    # we are selecting all backup info about all backups or backups which
+    # have same bkpconf_id as was our uuid backup, thus belonging to same alias
     my $query = "SELECT * FROM host JOIN bkpconf JOIN history";
     $query .= " ON host.host_id=bkpconf.host_id";
     $query .= " AND bkpconf.bkpconf_id=history.bkpconf_id";
@@ -684,7 +703,7 @@ return:
     
 =cut
 
-sub getType() {
+sub getType {
 
     my $self = shift;
     my %params = @_;
@@ -723,7 +742,7 @@ return:
     
 =cut
 
-sub tbl() {
+sub tbl {
 
     my $self = shift;
     my %params = @_;
@@ -770,7 +789,7 @@ return:
     
 =cut
 
-sub lst() {
+sub lst {
 
     my $self = shift;
     my %params = @_;
@@ -813,7 +832,7 @@ return:
     
 =cut
 
-sub tbl_rmt() {
+sub tbl_rmt {
 
     my $self = shift;
     my %params = @_;
@@ -871,9 +890,11 @@ return:
 
     void
     
+=back
+
 =cut
 
-sub lst_rmt() {
+sub lst_rmt {
 
     my $self = shift;
     my %params = @_;
