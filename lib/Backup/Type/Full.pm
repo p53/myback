@@ -14,6 +14,7 @@ use DateTime;
 use Data::Dumper;
 use DBI;
 use YAML::Tiny;
+use File::stat;
 
 use Term::Shell;
 
@@ -77,9 +78,12 @@ sub backup() {
     $self->log('base')->info("Renaming $bkpFileName to $uuidFileName");
 
     move($bkpFileName, $uuidFileName);
-
+    
+    my $filesize = stat($uuidFileName)->size;
+    
     $lastBkpInfo = $self->bkpInfoTimeToUTC('bkpInfo' => $lastBkpInfo);
-
+    $lastBkpInfo->{'bkp_size'} = $filesize;
+    
     $self->log('debug')->debug("Dumping last backup info with UTC times: ", sub { Dumper($lastBkpInfo) });
     $self->log('base')->info("Writing YAML config for remote backups");
 

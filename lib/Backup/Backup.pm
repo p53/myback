@@ -31,6 +31,7 @@ use POSIX;
 use Text::SimpleTable;
 use DBI;
 use Data::Dumper;
+use File::stat;
 
 use Term::Shell;
 
@@ -189,8 +190,12 @@ sub rmt_backup() {
     $shell->fatal($result);
     
     $lastBkpInfo = $self->mysqlXmlToHash('xml' => $result->{'msg'});
-    
     $lastBkpInfo = $self->bkpInfoTimeToUTC('bkpInfo' => $lastBkpInfo);
+    
+    my $uuidFileName = $aliasBkpDir . "/" . $lastBkpInfo->{'uuid'} . ".xb." . $compSuffix;
+    
+    my $filesize = stat($bkpFileName)->size;
+    $lastBkpInfo->{'bkp_size'} = $filesize;
     
     $self->log('base')->info("Starting import info about remote backup");
 
@@ -207,8 +212,6 @@ sub rmt_backup() {
     $sth->execute();
 
     $dbh->disconnect();
-
-    my $uuidFileName = $aliasBkpDir . "/" . $lastBkpInfo->{'uuid'} . ".xb." . $compSuffix;
 
     $self->log('base')->info("Renaming $bkpFileName to $uuidFileName");
 
@@ -497,8 +500,8 @@ sub dump_rmt() {
 
     $self->log('base')->info("Stopping mysql server");
 
-    my $shell = Term::Shell->new();
-    my $result = $shell->execCmd('cmd' => $stopDbSafe, 'cmdsNeeded' => [ 'mysqladmin' ]);
+    $shell = Term::Shell->new();
+    $result = $shell->execCmd('cmd' => $stopDbSafe, 'cmdsNeeded' => [ 'mysqladmin' ]);
 
     $shell->fatal($result);
         
@@ -816,12 +819,13 @@ sub tbl_rmt() {
     my %params = @_;
     my $data = $params{'data'};
 
+    my @units = ('b','Kb','Mb','Gb','Tb','Pb','Eb');
+    
     my $bkpTbl = Text::SimpleTable->new(
-                                        [19, 'host_name'],
                                         [19, 'alias'],
                                         [19, 'start_time'],
                                         [36, 'uuid'],
-                                        [16, 'end_lsn'],
+                                        [10, 'bkp_size'],
                                         [1, 'p'],
                                         [1, 'i'],
                                         [1, 't' ],
@@ -829,18 +833,26 @@ sub tbl_rmt() {
                                     );
     
     for my $info(@$data) {
+    
+        my $sizeLength = length($info->{'bkp_size'});
+        my $order = int($sizeLength / 3);
+        $order = ($sizeLength % 3) > 0 ? $order : ($order -1);
+        my $convUnit = ($order < 0) ? '' : $units[$order];
+        
+        my $converted = $info->{'bkp_size'} >> ( $order * 10 );
+        
         $bkpTbl->row(
-                        $info->{'host_name'},
                         $info->{'alias'},
                         $info->{'start_time'},
                         $info->{'uuid'},
-                        $info->{'innodb_to_lsn'},
+                        $converted . $convUnit,
                         $info->{'partial'},
                         $info->{'incremental'},
                         $info->{'compact'},
                         $info->{'compressed'}
                     );
         $bkpTbl->hr;
+        
     } # for
 
     print $bkpTbl->draw;
