@@ -285,10 +285,10 @@ sub rmt_tmp_backup {
 
     @hostsInfo = @{ $dbh->selectall_arrayref($query, { Slice => {} }) };
 
-    if( length(@hostsInfo) == 0 ) {
+    if( scalar(@hostsInfo) == 0 ) {
         $self->log->error("No such host!");
         croak "No such host!";
-    } elsif( length(@hostsInfo) > 1 ) {
+    } elsif( scalar(@hostsInfo) > 1 ) {
         $self->log->error("Found more than one alias with that name, check your DB!");
         croak "Found more than one alias with that name, check your DB!";
     } # if

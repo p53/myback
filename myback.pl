@@ -90,12 +90,11 @@ GetOptions(
 
 pod2usage(-verbose => 3) if $help;
 pod2usage(1) if !$action;
-pod2usage(1) if !$dir;
 
 pod2usage(-verbose => 3) if !defined( $allowedActions->{$action} );
 
 pod2usage(1) if ( $action eq 'restore' && !($dir && $host && $id && $location) );
-pod2usage(1) if ( $action eq 'list' && !($dir && $host && $format && $user && $pass) );
+pod2usage(1) if ( $action eq 'list' && !($host && $format && $user && $pass) );
 pod2usage(1) if ( $action eq 'list' && !defined( $allowedFormats->{$format} ) );
 
 pod2usage(1) if ( $action eq 'backup' && !defined( $allowedTypes->{$type} ) );
@@ -109,7 +108,7 @@ if( $action eq 'dump' && !($dir && $location && $dbname && $host) ) {
 } # if
 
 pod2usage(1) if ( $action eq 'rmt_backup' && !($dir && $host && $type) );
-pod2usage(1) if ( $action eq 'list_rmt' && !($dir && $format) );
+pod2usage(1) if ( $action eq 'list_rmt' && !($format) );
 pod2usage(1) if ( $action eq 'restore_rmt' && !($dir && $host && $id && $location) );
 pod2usage(1) if ( $action eq 'dump_rmt' && !($dir && $host && $id && $location && $dbname) );
 
@@ -179,7 +178,7 @@ __END__
         
     list
         lists backups on host
-        requires: dir, host, format, user, pass
+        requires: host, format, user, pass
         optional: socket
         
     rmt_backup
@@ -191,7 +190,7 @@ __END__
     list_rmt
         lists backups from remote hosts, which where transfered to the server
         during rmt_backup
-        requires: dir, host (again alias), format
+        requires: format
         
     restore_rmt
         restores backup from remote hosts, stored on server to the location loc

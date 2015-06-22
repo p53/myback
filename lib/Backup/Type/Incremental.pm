@@ -496,7 +496,7 @@ sub getBackupChain {
 
     # if there are more than one such backups, we sort them and choose the
     # one which is in time closest to our previous backup
-    if( length(@candidates) > 1 ) {
+    if( scalar(@candidates) > 1 ) {
         
         my %timeDiffs = ();
         
@@ -506,7 +506,7 @@ sub getBackupChain {
         } # for
 
         my @sortedDiffs = sort{ $a <=> $b } keys %timeDiffs;
-        my $minDiff = $sortedDiffs[length(@sortedDiffs) - 1];
+        my $minDiff = $sortedDiffs[scalar(@sortedDiffs) - 1];
 
         $closestCandidate = $timeDiffs{$minDiff};
 
