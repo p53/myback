@@ -1,15 +1,5 @@
 #!/usr/bin/perl -w
 
-BEGIN {
-        use Cwd 'abs_path';
-        # getting absolute path to this script and get current folder and library path
-        our $scriptPath = abs_path($0);
-        $scriptPath =~ s/^(.*)(\/|\\).*$/$1/;
-        our $classesPath = $scriptPath . '/lib';
-} # BEGIN
-
-use lib $main::classesPath;
-
 use strict;
 use warnings;
 use autodie;
@@ -19,12 +9,14 @@ use Sys::Hostname;
 use DateTime;
 use Data::Dumper;
 use Log::Log4perl qw(:levels);
+use FindBin;
+use lib "$FindBin::Bin/lib";
 
 use Backup::Backup;
 
 # configuring our logger, we have two one for debug output
 # and one for normal output, cause they have different formats
-my $log_conf = $main::scriptPath . "/etc/log.conf";
+my $log_conf = "$FindBin::Bin/etc/log.conf";
 Log::Log4perl::init($log_conf);
 
 my $dbgLogger = Log::Log4perl->get_logger('debug');

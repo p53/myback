@@ -11,6 +11,7 @@ package Backup::BackupInterface;
 =cut
 
 use Moose::Role;
+use MooseX::ClassAttribute;
 use namespace::autoclean;
 use Moose::Util::TypeConstraints;
 use Carp;
@@ -97,6 +98,24 @@ has 'compressions' => (
                 }
 );
 
+=head1 PUBLIC STATIC PROPERTIES
+
+=over 12
+
+=item DBI::db
+
+    stores database handler object
+
+=back
+
+=cut
+
+class_has 'localDbh' =>
+        ( is      => 'rw',
+          isa     => 'DBI::db',
+          default => sub { {} },
+        );
+        
 =head1 METHODS
 
 =over 12
@@ -140,6 +159,21 @@ sub restore_rmt {}
 =cut
 
 sub list_rmt {}
+
+sub BUILD {
+
+    my $class = shift;
+    
+    my $dbh = DBI->connect(
+                                "dbi:SQLite:dbname=" . $class->{'bkpDb'},
+                                "", 
+                                "",
+                                {'RaiseError' => 1}
+                            );
+                            
+    $class->localDbh($dbh);
+    
+} # end sub BUILD
 
 =item C<getLastBkpInfo>
 

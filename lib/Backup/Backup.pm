@@ -655,7 +655,7 @@ sub getRmtBackupsInfo {
     my $uuid = $params{'uuid'};
     my @backupsInfo = ();
 
-    $self->log('debug')->debug("Getting remotee backups info with params: ", , sub { Dumper(\%params) });
+    $self->log('debug')->debug("Getting remote backups info with params: ", , sub { Dumper(\%params) });
 
     my $dbh = DBI->connect(
                             "dbi:SQLite:dbname=" . $self->{'bkpDb'},

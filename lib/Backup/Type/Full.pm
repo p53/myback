@@ -219,9 +219,9 @@ sub restore {
 
     $self->log('base')->info("Removing percona files in $restoreLocation");
 
-    #unlink glob("$restoreLocation/xtrabackup_*");
+    unlink glob("$restoreLocation/xtrabackup_*");
     # we don't remove this because we might it need for server start
-    unlink "$restoreLocation/backup-my.cnf";
+    #unlink "$restoreLocation/backup-my.cnf";
 
     $self->log('base')->info("Restoration successful");
 

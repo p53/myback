@@ -322,9 +322,9 @@ sub restore {
 
     $self->log('base')->info("Removing percona files in $restoreLocation");
 
-    #unlink glob("$restoreLocation/xtrabackup_*");
+    unlink glob("$restoreLocation/xtrabackup_*");
     # we don't remove this because we might it need for server start
-    unlink "$restoreLocation/backup-my.cnf";
+    #unlink "$restoreLocation/backup-my.cnf";
 
     $self->log('base')->info("Restoration successful");
 
@@ -385,7 +385,7 @@ sub rmt_backup {
     
     $self->log('base')->info("Getting info about last backup for host: ", $hostInfo->{'ip'});
     
-    # we are getting info about last backup on remote host, so we now from where
+    # we are getting info about last backup on remote host, so we know from where
     # start new incremental backup
     my $lastBkpInfoCmd = "ssh -i " . $privKeyPath . " " . $hostInfo->{'ip'} . " '";
     $lastBkpInfoCmd .= 'mysql -e "select * from PERCONA_SCHEMA.xtrabackup_history';
