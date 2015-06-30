@@ -306,18 +306,11 @@ sub rmt_tmp_backup {
 
     $self->log('base')->info("Starting remote backup for host alias ", $params{'host'});
 
-    my $dbh = DBI->connect(
-                            "dbi:SQLite:dbname=" . $self->{'bkpDb'},
-                            "", 
-                            "",
-                            {'RaiseError' => 1}
-                        );
-
     my $query = "SELECT * FROM host JOIN bkpconf";
     $query .= " ON host.host_id=bkpconf.host_id";
     $query .= " WHERE bkpconf.alias='" . $params{'host'} . "'";
 
-    @hostsInfo = @{ $dbh->selectall_arrayref($query, { Slice => {} }) };
+    @hostsInfo = @{ $self->localDbh->selectall_arrayref($query, { Slice => {} }) };
 
     if( scalar(@hostsInfo) == 0 ) {
         $self->log->error("No such host!");
@@ -384,7 +377,7 @@ sub rmt_tmp_backup {
         my $config = $yaml->[0];
         
         my @values = values(%$config);
-        my @escVals = map { my $s = $_; $s = $dbh->quote($s); $s } @values;
+        my @escVals = map { my $s = $_; $s = $self->localDbh->quote($s); $s } @values;
 
         $self->log('debug')->debug("Dumping imported info: ", sub { Dumper($config) });
 
@@ -392,7 +385,7 @@ sub rmt_tmp_backup {
         $query .=  "bkpconf_id)";
         $query .= " VALUES(" . join( ",", @escVals ). "," . $hostInfo->{'bkpconf_id'} . ")";
         
-        my $sth = $dbh->prepare($query);
+        my $sth = $self->localDbh->prepare($query);
         $sth->execute();
 
         $self->log('debug')->debug("Removing $bkpConf");
@@ -419,8 +412,6 @@ sub rmt_tmp_backup {
         $shell->fatal($result);
 
     } # for
-
-    $dbh->disconnect();
 
     $self->log('base')->info("Removing temporary private key file");
 

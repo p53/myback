@@ -120,19 +120,12 @@ sub rmt_backup {
     
     $self->log('base')->info("Starting remote backup for host alias ", $params{'host'});
 
-    my $dbh = DBI->connect(
-                            "dbi:SQLite:dbname=" . $self->{'bkpDb'},
-                            "", 
-                            "",
-                            {'RaiseError' => 1}
-                        );
-
     # getting information about host from db
     my $query = "SELECT * FROM host JOIN bkpconf";
     $query .= " ON host.host_id=bkpconf.host_id";
     $query .= " WHERE bkpconf.alias='" . $params{'host'} . "'";
 
-    @hostsInfo = @{ $dbh->selectall_arrayref($query, { Slice => {} }) };
+    @hostsInfo = @{ $self->localDbh->selectall_arrayref($query, { Slice => {} }) };
 
     if( scalar(@hostsInfo) == 0 ) {
         $self->log->error("No such host!");
@@ -193,9 +186,7 @@ sub rmt_backup {
     
     $lastBkpInfo = $self->mysqlXmlToHash('xml' => $result->{'msg'});
     $lastBkpInfo = $self->bkpInfoTimeToUTC('bkpInfo' => $lastBkpInfo);
-    
-    my $uuidFileName = $aliasBkpDir . "/" . $lastBkpInfo->{'uuid'} . ".xb." . $compSuffix;
-    
+
     my $filesize = stat($bkpFileName)->size;
     $lastBkpInfo->{'bkp_size'} = $filesize;
     
@@ -203,7 +194,7 @@ sub rmt_backup {
 
     # inserting info about backup to backup server database
     my @values = values(%$lastBkpInfo);
-    my @escVals = map { my $s = $_; $s = $dbh->quote($s); $s } @values;
+    my @escVals = map { my $s = $_; $s = $self->localDbh->quote($s); $s } @values;
 
     $self->log('debug')->debug("Dumping imported info: ", sub { Dumper($lastBkpInfo) });
 
@@ -211,11 +202,11 @@ sub rmt_backup {
     $query .=  "bkpconf_id)";
     $query .= " VALUES(" . join( ",", @escVals ). "," . $hostInfo->{'bkpconf_id'} . ")";
 
-    my $sth = $dbh->prepare($query);
+    my $sth = $self->localDbh->prepare($query);
     $sth->execute();
-
-    $dbh->disconnect();
-
+    
+    my $uuidFileName = $aliasBkpDir . "/" . $lastBkpInfo->{'uuid'} . ".xb." . $compSuffix;
+    
     $self->log('base')->info("Renaming $bkpFileName to $uuidFileName");
 
     move($bkpFileName, $uuidFileName);
@@ -656,13 +647,6 @@ sub getRmtBackupsInfo {
     my @backupsInfo = ();
 
     $self->log('debug')->debug("Getting remote backups info with params: ", , sub { Dumper(\%params) });
-
-    my $dbh = DBI->connect(
-                            "dbi:SQLite:dbname=" . $self->{'bkpDb'},
-                            "", 
-                            "",
-                            {'RaiseError' => 1}
-                        );
     
     # we are selecting all backup info about all backups or backups which
     # have same bkpconf_id as was our uuid backup, thus belonging to same alias
@@ -678,9 +662,7 @@ sub getRmtBackupsInfo {
     
     $self->log('debug')->debug("Query: ", $query);
     
-    @backupsInfo = @{ $dbh->selectall_arrayref($query, { Slice => {} }) };
-
-    $dbh->disconnect();
+    @backupsInfo = @{ $self->localDbh->selectall_arrayref($query, { Slice => {} }) };
 
     return \@backupsInfo;
 
