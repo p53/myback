@@ -160,6 +160,34 @@ sub backup {
 
 } # end sub backup
 
+sub restore {
+
+    my $self            = shift;
+    my %params          = @_;
+    my $chain           = [];
+    my $uuid            = $params{'uuid'};
+    my $backupsInfo     = $params{'backupsInfo'};
+    
+    $self->log('base')->info("Getting backups info till nearest previous full backup");
+        
+    my $currentBkp = $backupsInfo->{$uuid};
+    
+    $chain = $self->getLocalBackupChain(
+                                            'uuid' => $uuid,
+                                            'backupsInfo' => $backupsInfo,
+                                            'chain' => $chain
+                                        );
+
+    # we need to start restore from full backup - oldest first
+    my @revChain = reverse @$chain;                            
+    push(@revChain, $currentBkp);
+
+    $params{'chain'} = \@revChain;
+    
+    $self->restore_common(%params);
+    
+} # end sub restore
+
 =item C<restore>
 
 Restores incremental backup stored local host
@@ -172,55 +200,36 @@ param:
     
     hostBkpDir string - where we store backup
     
-    backupsInfo hash_ref - list of all backups info related to that host alias
-    
 return:
 
     void
     
 =cut
 
-sub restore {
+sub restore_common {
 
     my $self            = shift;
     my %params          = @_;
     my $uuid            = $params{'uuid'};
     my $restoreLocation = $params{'location'};
-    my $backupsInfo     = $params{'backupsInfo'};
-    my $currentBkp      = $backupsInfo->{$uuid};
+    my $chain           = $params{'chain'};
     my $compSuffix      = $self->{'compressions'}->{$self->{'compression'}};
     my $compUtil        = $self->{'compression'};
     my $result          = {};
-   
-    if( ! -d $restoreLocation ) {
-        $self->log('base')->info("Creating restore directory $restoreLocation");
-        mkdir $restoreLocation;
-    } # if
-
-    my $chain = [];
-
-    $self->log('base')->info("Getting backups info till nearest previous full backup");
-
-    # to be able to restore incremental backup, we need previous incremental
-    # backups plus full backup and we are getting this info here, backups are
-    # returned from newest to oldest
-    $chain = $self->getBackupChain(
-                                    'backupsInfo' => $backupsInfo, 
-                                    'uuid' => $uuid, 
-                                    'chain' => $chain
-                                );
 
     $self->log('debug')->debug("Dumping backups chain:", sub { Dumper($chain) });
 
-    # we need to start restore from full backup - oldest first
-    my @revChain = reverse @$chain;                            
-    my $fullBkp = shift @revChain;
-
+    # we need to start restore from full backup                    
+    my $fullBkp = shift @$chain;
+    my $currentBkp = pop @$chain;
+    
     $self->log('base')->info("Creating restore directory $restoreLocation");
 
-    if( ! -d $restoreLocation ) {
-        $self->log('base')->info("Creating restore directory $restoreLocation");
-        mkpath($restoreLocation);
+    my $tmpRestoreLoc = $restoreLocation . '/tmp';
+    
+    if( ! -d $tmpRestoreLoc ) {
+        $self->log('base')->info("Creating restore directory $tmpRestoreLoc");
+        mkpath($tmpRestoreLoc);
     } # if
 
     my @files = glob($params{'hostBkpDir'} . "/*/" . $fullBkp->{'uuid'} . ".xb." . $compSuffix);
@@ -248,10 +257,10 @@ sub restore {
 
     try{
         $result = $shell->execCmd('cmd' => $restoreFullCmd, 'cmdsNeeded' => [ 'innobackupex' ]);
+        $shell->fatal($result);
     } catch {
         $self->log->error("Error: ", $result->{'msg'});
-        remove_tree($restoreLocation);
-        $shell->fatal($result);
+        File::Path::remove_tree($restoreLocation);
     }; # try
 
     $self->log('base')->info("Restoring each previous incremental backup and applying innodb logs");
@@ -259,7 +268,7 @@ sub restore {
     # we apply each incremental backup from oldest to newest on full backup
     my $restoreIncrCmd = "innobackupex --apply-log --redo-only " . $restoreLocation . " --incremental-dir=";
 
-    for my $prevBkp(@revChain) {
+    for my $prevBkp(@$chain) {
 
         my @files = glob($params{'hostBkpDir'} . "/*/" . $prevBkp->{'uuid'} . ".xb." . $compSuffix);
         my $bkpFile = $files[0];
@@ -271,18 +280,26 @@ sub restore {
         
         $bkpFile =~ /(.*)\/(.*)$/;
 
-        $self->log('base')->info("Incremental backup in dir $1 and uuid" . $prevBkp->{'uuid'});
+        my $decompCmd = $compUtil . " -c -d " . $bkpFile . "|xbstream -x -C " . $tmpRestoreLoc;
+        
+        $result = $shell->execCmd('cmd' => $decompCmd, 'cmdsNeeded' => [ $compUtil, 'xbstream' ]);
 
-        $restoreIncrCmd .= $1;
+        $shell->fatal($result);
+    
+        $self->log('base')->info("Incremental backup in dir $1 and uuid " . $prevBkp->{'uuid'});
+
+        $restoreIncrCmd .= $tmpRestoreLoc;
         
         try{
             $result = $shell->execCmd('cmd' => $restoreIncrCmd, 'cmdsNeeded' => [ 'innobackupex' ]);
+            $shell->fatal($result);
         } catch {
             $self->log->error("Error: ", $result->{'msg'});
-            remove_tree($restoreLocation);
-            $shell->fatal($result);
+            File::Path::remove_tree($restoreLocation);
         }; # try
 
+        File::Path::remove_tree($tmpRestoreLoc, {keep_root => 1});
+        
     } # for
 
     # applying our last incremental backup plus reverting uncommited transactions
@@ -297,29 +314,36 @@ sub restore {
     } # if
         
     $bkpFile =~ /(.*)\/(.*)$/;
-
+        
     $self->log('base')->info("Restoring last incremental backup, applying innodb logs and reverting uncommited transactions");
+    
+    $decompCmd = $compUtil . " -c -d " . $bkpFile . "|xbstream -x -C " . $tmpRestoreLoc;
 
-    $lastIncrCmd .= $1;
+    $result = $shell->execCmd('cmd' => $decompCmd, 'cmdsNeeded' => [ $compUtil, 'xbstream' ]);
+    $shell->fatal($result);
+    
+    $lastIncrCmd .= $tmpRestoreLoc;
 
     try{
         $result = $shell->execCmd('cmd' => $lastIncrCmd, 'cmdsNeeded' => [ 'innobackupex' ]);
+        $shell->fatal($result);
     } catch {
         $self->log->error("Error: ", $result->{'msg'});
-        remove_tree($restoreLocation);
-        $shell->fatal($result);
+        File::Path::remove_tree($restoreLocation);
     }; # try
 
     my $restoreFullRollbackCmd = "innobackupex --apply-log " . $restoreLocation;
 
     try{
         $result = $shell->execCmd('cmd' => $restoreFullRollbackCmd, 'cmdsNeeded' => [ 'innobackupex' ]);
+        $shell->fatal($result);
     } catch {
         $self->log->error("Error: ", $result->{'msg'});
-        remove_tree($restoreLocation);
-        $shell->fatal($result);
+        File::Path::remove_tree($restoreLocation);
     }; # try
 
+    File::Path::remove_tree($tmpRestoreLoc);
+    
     $self->log('base')->info("Removing percona files in $restoreLocation");
 
     unlink glob("$restoreLocation/xtrabackup_*");
@@ -355,38 +379,38 @@ sub rmt_backup {
     my $privKeyPath = $params{'privKeyPath'};
     my $bkpFileName = $params{'bkpFileName'};
     my $compUtil    = $self->{'compression'};
-    
+    my $parentId = '';
+    my $result = {};
     my $shell = Term::Shell->new();
-    
-    $self->log('base')->info("Checking if history exists on remote host: ", $hostInfo->{'ip'});
-    
-    # we are checking if local mysql backup history exists, if it is e.g. new
-    # host where innobackup haven't been run, there won't exist, so to prevent
-    # backup failure we are checking it before running innobackupex script
-    # we are getting info in xml, it's easier to parse
-    my $checkIfDbExists = "ssh -i " . $privKeyPath . " " . $hostInfo->{'ip'} . " '";
-    $checkIfDbExists .= 'mysql -e "SELECT COUNT(*) AS dbexists from';
-    $checkIfDbExists .= ' information_schema.tables WHERE table_schema=\"PERCONA_SCHEMA\"';
-    $checkIfDbExists .= ' and table_name=\"xtrabackup_history\""';
-    $checkIfDbExists .= ' -u ' . $hostInfo->{'user'} . " -p\Q$hostInfo->{'pass'}\E";
-    $checkIfDbExists .= ' -h ' . $hostInfo->{'local_host'} . ' -X';
-    $checkIfDbExists .= ' -S ' . $hostInfo->{'socket'} . "'";
-    
-    my $result = $shell->execCmd('cmd' => $checkIfDbExists, 'cmdsNeeded' => [ 'ssh' ]);
 
-    my $dbExists = $self->mysqlXmlToHash('xml' => $result->{'msg'});
-    
-    $self->log('debug')->debug("Result of history check is: ", $result->{'msg'});
-    
-    if($dbExists->{'dbexists'} == 0 ) {
-        $self->log->error("Incremental backup needs previous backup, no local database found on remote host!");
-        croak "Incremental backup needs previous backup, no local database found on remote host!";
+    $self->log('base')->info("Getting info about last backup for host: ", $hostInfo->{'ip'});
+
+    if( $hostInfo->{'incremental'} eq 'Y' ) {
+        $parentId = $hostInfo->{'parent_id'};
+    } else {
+        $parentId = $hostInfo->{'history_id'};
     } # if
     
-    $self->log('base')->info("Getting info about last backup for host: ", $hostInfo->{'ip'});
+    $self->log('debug')->debug("Dumping last backup info: ", sub { Dumper($hostInfo) });
     
-    # we are getting info about last backup on remote host, so we know from where
-    # start new incremental backup
+    $self->log('base')->info("Executing incremental backup on remote host $hostInfo->{'ip'} on socket $hostInfo->{'socket'}");
+    
+    my $rmtBkpCmd = "ssh -i " . $privKeyPath . " " . $hostInfo->{'ip'} . " '";
+    $rmtBkpCmd .= "innobackupex --incremental --user=" . $hostInfo->{'user'};
+    $rmtBkpCmd .= " --history --stream=xbstream --host=" . $hostInfo->{'local_host'};
+    $rmtBkpCmd .= " --password=\Q$hostInfo->{'pass'}\E --incremental-force-scan";
+    $rmtBkpCmd .= " --incremental-history-uuid=" . $hostInfo->{'uuid'};
+    $rmtBkpCmd .= " --socket=" . $hostInfo->{'socket'};
+    $rmtBkpCmd .= " " . $hostInfo->{'local_dir'};
+    $rmtBkpCmd .= " 2>/dev/null | " . $compUtil . " -c ' > " . $bkpFileName;
+    
+    $result = $shell->execCmd('cmd' => $rmtBkpCmd, 'cmdsNeeded' => [ 'ssh' ]);
+
+    $self->log('debug')->debug("Result of command is: ", $result->{'msg'});
+    
+    $shell->fatal($result);
+    
+    # getting information about remote backup from remote host
     my $lastBkpInfoCmd = "ssh -i " . $privKeyPath . " " . $hostInfo->{'ip'} . " '";
     $lastBkpInfoCmd .= 'mysql -e "select * from PERCONA_SCHEMA.xtrabackup_history';
     $lastBkpInfoCmd .= ' ORDER BY innodb_to_lsn DESC, start_time DESC LIMIT 1"';
@@ -399,27 +423,28 @@ sub rmt_backup {
     $shell->fatal($result);
     
     my $lastBkpInfo = $self->mysqlXmlToHash('xml' => $result->{'msg'});
-    
-    $self->log('debug')->debug("Dumping last backup info: ", sub { Dumper($lastBkpInfo) });
-    
-    $self->log('base')->info("Executing incremental backup on remote host $hostInfo->{'ip'} on socket $hostInfo->{'socket'}");
-    
-    my $rmtBkpCmd = "ssh -i " . $privKeyPath . " " . $hostInfo->{'ip'} . " '";
-    $rmtBkpCmd .= "innobackupex --incremental --user=" . $hostInfo->{'user'};
-    $rmtBkpCmd .= " --history --stream=xbstream --host=" . $hostInfo->{'local_host'};
-    $rmtBkpCmd .= " --password=\Q$hostInfo->{'pass'}\E --incremental-force-scan";
-    $rmtBkpCmd .= " --incremental-history-uuid=" . $lastBkpInfo->{'uuid'};
-    $rmtBkpCmd .= " --socket=" . $hostInfo->{'socket'};
-    $rmtBkpCmd .= " " . $hostInfo->{'local_dir'};
-    $rmtBkpCmd .= "| " . $compUtil . " -c ' > " . $bkpFileName;
-    
-    $result = $shell->execCmd('cmd' => $rmtBkpCmd, 'cmdsNeeded' => [ 'ssh' ]);
+    $lastBkpInfo = $self->bkpInfoTimeToUTC('bkpInfo' => $lastBkpInfo);
 
-    $self->log('debug')->debug("Result of command is: ", $result->{'msg'});
+    my $filesize = stat($bkpFileName)->size;
+    $lastBkpInfo->{'bkp_size'} = $filesize;
+    $lastBkpInfo->{'parent_id'} = $parentId;
     
-    $shell->fatal($result);
- 
-    return $result;
+    $self->log('base')->info("Starting import info about remote backup");
+
+    # inserting info about backup to backup server database
+    my @values = values(%$lastBkpInfo);
+    my @escVals = map { my $s = $_; $s = $self->localDbh->quote($s); $s } @values;
+
+    $self->log('debug')->debug("Dumping imported info: ", sub { Dumper($lastBkpInfo) });
+
+    my $query = "INSERT INTO history(" . join( ",", keys(%$lastBkpInfo) ) . ",";
+    $query .=  "bkpconf_id)";
+    $query .= " VALUES(" . join( ",", @escVals ). "," . $hostInfo->{'confId'} . ")";
+
+    my $sth = $self->localDbh->prepare($query);
+    $sth->execute();
+
+    return $lastBkpInfo;
     
 } # end sub rmt_backup
 
@@ -441,8 +466,12 @@ sub restore_rmt {
 
     my $self    = shift;
     my %params  = @_;
-
-    $self->restore(%params);
+    my $uuid = $params{'uuid'};
+    
+    my $chain = $self->getBackupChain('uuid' => $uuid);
+    $params{'chain'} = $chain;
+    
+    $self->restore_common(%params);
 
 } # end sub restore_rmt
 
@@ -470,6 +499,30 @@ return:
 =cut
 
 sub getBackupChain {
+
+    my $self            = shift;
+    my %params          = @_;
+    my $uuid            = $params{'uuid'};
+ 
+    my $histIdQuery = "SELECT parent_id FROM history WHERE uuid='" . $uuid . "'";
+    my $timeQuery = "SELECT start_time FROM history WHERE uuid='" . $uuid . "'";
+    
+    my $query = "SELECT * FROM history WHERE history_id IN";
+    $query .= " (" . $histIdQuery . ") OR parent_id IN (" . $histIdQuery . ")";
+    $query .= " AND start_time <= (" . $timeQuery . ")";
+    $query .= " ORDER BY innodb_to_lsn ASC, start_time ASC";
+    
+    $self->log('debug')->debug("Query: ", $query);
+    
+    my @chain = @{ $self->localDbh->selectall_arrayref($query, { Slice => {} }) };
+    
+    $self->log('debug')->debug("Dumping backup chain: ", sub { Dumper(@chain) });
+    
+    return \@chain;
+
+} # end sub getBackupChain
+
+sub getLocalBackupChain {
 
     my $self            = shift;
     my %params          = @_;
@@ -518,7 +571,7 @@ sub getBackupChain {
 
     # if we didn't reach full backup we need to find it's parent
     if( $closestCandidate->{'incremental'} eq 'Y' ) {
-        $self->getBackupChain(
+        $self->getLocalBackupChain(
                                 'backupsInfo' => $backupsInfo, 
                                 'uuid' => $closestCandidate->{'uuid'}, 
                                 'chain' => $chain
@@ -527,7 +580,7 @@ sub getBackupChain {
 
     return $chain;
 
-} # end sub getBackupChain
+} # end sub getLocalBackupChain
 
 no Moose::Role;
 

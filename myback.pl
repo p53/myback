@@ -22,7 +22,7 @@ Log::Log4perl::init($log_conf);
 my $dbgLogger = Log::Log4perl->get_logger('debug');
 my $baseLogger = Log::Log4perl->get_logger('base');
 
-$dbgLogger->level($INFO);
+$dbgLogger->level($DEBUG);
 $baseLogger->level($INFO);
 
 $dbgLogger->debug('Starting');

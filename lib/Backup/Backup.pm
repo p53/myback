@@ -121,10 +121,13 @@ sub rmt_backup {
     $self->log('base')->info("Starting remote backup for host alias ", $params{'host'});
 
     # getting information about host from db
-    my $query = "SELECT * FROM host JOIN bkpconf";
-    $query .= " ON host.host_id=bkpconf.host_id";
-    $query .= " WHERE bkpconf.alias='" . $params{'host'} . "'";
-
+    my $query = "select *, bkpconf.bkpconf_id AS confId from host JOIN bkpconf";
+    $query .= " ON host.host_id=bkpconf.host_id LEFT JOIN history";
+    $query .= " ON history.bkpconf_id=bkpconf.bkpconf_id WHERE bkpconf.alias='" . $params{'host'} . "'";
+    $query .= " ORDER BY innodb_to_lsn DESC, start_time DESC LIMIT 1";
+    
+    $self->log('debug')->debug("Query: ", , sub { Dumper($query) });
+    
     @hostsInfo = @{ $self->localDbh->selectall_arrayref($query, { Slice => {} }) };
 
     if( scalar(@hostsInfo) == 0 ) {
@@ -160,50 +163,17 @@ sub rmt_backup {
     my $shell = Term::Shell->new();
     my $result = '';
     
-    try{
-        $result = $self->{'bkpType'}->rmt_backup(
-                                        'hostInfo' => $hostInfo, 
-                                        'privKeyPath' => $privKeyPath,
-                                        'bkpFileName' => $bkpFileName
-                                    );
-    } catch {
-        File::Path::remove_tree($aliasBkpDir . "/" . $now);
-        $self->log->error("Shell command failed! Message: ", $result->{'msg'});
-        croak "Shell command failed! Message: " . $result->{'msg'};
-    }; # try
-
-    # getting information about remote backup from remote host
-    my $lastBkpInfoCmd = "ssh -i " . $privKeyPath . " " . $hostInfo->{'ip'} . " '";
-    $lastBkpInfoCmd .= 'mysql -e "select * from PERCONA_SCHEMA.xtrabackup_history';
-    $lastBkpInfoCmd .= ' ORDER BY innodb_to_lsn DESC, start_time DESC LIMIT 1"';
-    $lastBkpInfoCmd .= ' -u ' . $hostInfo->{'user'} . " -p\Q$hostInfo->{'pass'}\E";
-    $lastBkpInfoCmd .= ' -h ' . $hostInfo->{'local_host'} . ' -X';
-    $lastBkpInfoCmd .= ' -S ' . $hostInfo->{'socket'} . "'";
-    
-    $result = $shell->execCmd('cmd' => $lastBkpInfoCmd, 'cmdsNeeded' => [ 'ssh' ]);
-
-    $shell->fatal($result);
-    
-    $lastBkpInfo = $self->mysqlXmlToHash('xml' => $result->{'msg'});
-    $lastBkpInfo = $self->bkpInfoTimeToUTC('bkpInfo' => $lastBkpInfo);
-
-    my $filesize = stat($bkpFileName)->size;
-    $lastBkpInfo->{'bkp_size'} = $filesize;
-    
-    $self->log('base')->info("Starting import info about remote backup");
-
-    # inserting info about backup to backup server database
-    my @values = values(%$lastBkpInfo);
-    my @escVals = map { my $s = $_; $s = $self->localDbh->quote($s); $s } @values;
-
-    $self->log('debug')->debug("Dumping imported info: ", sub { Dumper($lastBkpInfo) });
-
-    $query = "INSERT INTO history(" . join( ",", keys(%$lastBkpInfo) ) . ",";
-    $query .=  "bkpconf_id)";
-    $query .= " VALUES(" . join( ",", @escVals ). "," . $hostInfo->{'bkpconf_id'} . ")";
-
-    my $sth = $self->localDbh->prepare($query);
-    $sth->execute();
+#   try{
+    $lastBkpInfo = $self->{'bkpType'}->rmt_backup(
+                                    'hostInfo' => $hostInfo, 
+                                    'privKeyPath' => $privKeyPath,
+                                    'bkpFileName' => $bkpFileName
+                                );
+#    } catch {
+#        File::Path::remove_tree($aliasBkpDir . "/" . $now);
+#        $self->log->error("Shell command failed! Message: ", $result->{'msg'});
+#        croak "Shell command failed! Message: " . $result->{'msg'};
+#    }; # try
     
     my $uuidFileName = $aliasBkpDir . "/" . $lastBkpInfo->{'uuid'} . ".xb." . $compSuffix;
     
@@ -302,29 +272,22 @@ sub restore_rmt {
     my $self = shift;
     my %params = @_;
     my $uuid = $params{'uuid'};
-    my $backupsInfo = {};
 
     $self->log('base')->info("Starting remote restore of backups with uuid ", $uuid);
 
     # getting info about remotly backuped backup from server db
-    my $allBackups = $self->getRmtBackupsInfo('uuid' => $uuid);
+    my $backups = $self->getRmtBackupsInfo('uuid' => $uuid);
 
-    $self->log('debug')->debug("Dumping all backups info", , sub { Dumper($allBackups) });
+    $self->log('debug')->debug("Dumping backups info", , sub { Dumper($backups) });
 
-    for my $bkp(@$allBackups) {
-        $backupsInfo->{$bkp->{'uuid'}} = $bkp;
-    } # for
-
-    if( !defined( $backupsInfo->{$uuid} ) ) {
+    if( scalar(@$backups) == 0 ) {
         $self->log->error("No backups with uuid $uuid!");
         croak "No backups with uuid $uuid!";
     } # if
 
-    my $info = $backupsInfo->{$uuid};
-
     # if our backup is incremental start restore procedure specific for
     # incremental otherwise for full
-    if( $backupsInfo->{$uuid}->{'incremental'} eq 'Y' ) {
+    if( $backups->[0]->{'incremental'} eq 'Y' ) {
         $self->{'bkpType'} = $self->getType(
                                             'bkpType' => 'incremental'
                                         );
@@ -333,12 +296,10 @@ sub restore_rmt {
                                             'bkpType' => 'full'
                                         );
     } # if
-    
-    $params{'backupsInfo'} = $backupsInfo;
 
     $self->{'bkpType'}->restore_rmt(%params);
 
-    return $info;
+    return $backups->[0];
 
 } # end sub restore_rmt
 
@@ -655,9 +616,7 @@ sub getRmtBackupsInfo {
     $query .= " AND bkpconf.bkpconf_id=history.bkpconf_id";
     
     if( $uuid ) {
-        my $subQuery = "SELECT bkpconf.bkpconf_id FROM bkpconf JOIN history";
-        $subQuery .= " on bkpconf.bkpconf_id=history.bkpconf_id WHERE uuid='" . $uuid . "'";
-        $query .= " AND bkpconf.bkpconf_id IN (" . $subQuery .")";
+        $query .= " WHERE uuid='" . $uuid . "'";
     } # if
     
     $self->log('debug')->debug("Query: ", $query);

@@ -272,8 +272,41 @@ sub rmt_backup {
 
     $shell->fatal($result);
 
-    return $result;
+    # getting information about remote backup from remote host
+    my $lastBkpInfoCmd = "ssh -i " . $privKeyPath . " " . $hostInfo->{'ip'} . " '";
+    $lastBkpInfoCmd .= 'mysql -e "select * from PERCONA_SCHEMA.xtrabackup_history';
+    $lastBkpInfoCmd .= ' ORDER BY innodb_to_lsn DESC, start_time DESC LIMIT 1"';
+    $lastBkpInfoCmd .= ' -u ' . $hostInfo->{'user'} . " -p\Q$hostInfo->{'pass'}\E";
+    $lastBkpInfoCmd .= ' -h ' . $hostInfo->{'local_host'} . ' -X';
+    $lastBkpInfoCmd .= ' -S ' . $hostInfo->{'socket'} . "'";
+    
+    $result = $shell->execCmd('cmd' => $lastBkpInfoCmd, 'cmdsNeeded' => [ 'ssh' ]);
 
+    $shell->fatal($result);
+    
+    my $lastBkpInfo = $self->mysqlXmlToHash('xml' => $result->{'msg'});
+    $lastBkpInfo = $self->bkpInfoTimeToUTC('bkpInfo' => $lastBkpInfo);
+
+    my $filesize = stat($bkpFileName)->size;
+    $lastBkpInfo->{'bkp_size'} = $filesize;
+    
+    $self->log('base')->info("Starting import info about remote backup");
+
+    # inserting info about backup to backup server database
+    my @values = values(%$lastBkpInfo);
+    my @escVals = map { my $s = $_; $s = $self->localDbh->quote($s); $s } @values;
+
+    $self->log('debug')->debug("Dumping imported info: ", sub { Dumper($lastBkpInfo) });
+
+    my $query = "INSERT INTO history(" . join( ",", keys(%$lastBkpInfo) ) . ",";
+    $query .=  "bkpconf_id)";
+    $query .= " VALUES(" . join( ",", @escVals ). "," . $hostInfo->{'confId'} . ")";
+
+    my $sth = $self->localDbh->prepare($query);
+    $sth->execute();
+
+    return $lastBkpInfo;
+    
 } # end sub rmt_backup
 
 =item C<restore_rmt>
