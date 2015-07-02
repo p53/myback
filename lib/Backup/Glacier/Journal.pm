@@ -137,6 +137,10 @@ sub add_entry {
             croak "There is more than one record for uuid: " . $file;
         } # if
         
+        if( scalar(@historyRecs) > 1) {
+            croak "There is no record in history for uuid: " . $file;
+        } # if
+        
         $self->hashInsert('table' => 'glacier', 'data' => $historyRecs[0]);
         
         $e->{'history_id'} = $historyRecs[0]->{'history_id'};

@@ -43,6 +43,7 @@ my $allowedActions = {
                         'sync' => 1,
                         'clean' => 1,
                         'clean_rmt' => 1,
+                        'clean_journal' => 1,
                         'restore' => 1
                     };
 
@@ -58,7 +59,7 @@ GetOptions(
                 'dir|d=s' => \$dir,
                 'loc|l:s' => \$location,
                 'id|i:s' => \$id,
-                'time|t:i' => \$time,
+                'time|t:s' => \$time,
                 'format|f:s' => \$format,
                 'help!' => \$help
         ) or pod2usage(-verbose => 3);

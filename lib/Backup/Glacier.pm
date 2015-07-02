@@ -93,7 +93,20 @@ sub clean {
     my $config = $params{'config'};
     my $bkpDir = $params{'bkpDir'};
     my @deletedBackups = ();
-
+    my $units = {
+                    'h' => 'hours',
+                    'd' => 'days',
+                    'm' => 'minutes'
+                };
+    
+    $time =~ /(\d+)([hdm])/;
+    my $unit = $2;
+    my $timeNum = $1;
+    
+    if( ! exists($units->{$unit}) ) {
+        croak "Bad time unit!";
+    } # if
+    
     my %journal_opts = ( 'journal_encoding' => 'UTF-8' );
     
     my $j = Backup::Glacier::Journal->new(
@@ -104,7 +117,8 @@ sub clean {
                                   
     my $now = DateTime->now();
     $now->set_time_zone('UTC');
-    my $cleanTime = $now->subtract( days => $time );
+    
+    my $cleanTime = $now->subtract( $units->{$unit} => $timeNum );
     
     $self->log('base')->info("Selecting old files from history");
     
@@ -115,7 +129,7 @@ sub clean {
         
     my @localBackups = @{ $self->localDbh->selectall_arrayref($query, { Slice => {} }) };
     
-    $self->log('debug')->debug("Found backups older than " . $time . " days: ", sub { Dumper(\@localBackups) });
+    $self->log('debug')->debug("Found backups older than " . $timeNum . " $units->{$unit}: ", sub { Dumper(\@localBackups) });
         
     $self->log('base')->info("Starting cleanup");
     
@@ -183,6 +197,19 @@ sub clean_rmt {
     my $time = $params{'time'};
     my $config = $params{'config'};
     my $bkpDir = $params{'bkpDir'};
+    my $units = {
+                    'h' => 'hours',
+                    'd' => 'days',
+                    'm' => 'minutes'
+                };
+    
+    $time =~ /(\d+)([hdm])/;
+    my $unit = $2;
+    my $timeNum = $1;
+    
+    if( ! exists($units->{$unit}) ) {
+        croak "Bad time unit!";
+    } # if
     
     my %journal_opts = ( 'journal_encoding' => 'UTF-8' );
     
@@ -194,23 +221,23 @@ sub clean_rmt {
                                   
     my $now = DateTime->now();
     $now->set_time_zone('UTC');
-    my $cleanTime = $now->subtract( days => $time );
+    my $cleanTime = $now->subtract( $units->{$unit} => $timeNum );
     
     $self->log('base')->info("Selecting old files from history");
     
     my $deletedQuery = "SELECT history_id FROM journal";
     $deletedQuery .= " WHERE type='DELETED'";
 
-    my $glcQuery = "SELECT * FROM journal JOIN glacier ON";
+    my $glcQuery = "SELECT glacier.history_id AS hist_id, * FROM journal JOIN glacier ON";
     $glcQuery .= " journal.history_id = glacier.history_id WHERE";
-    $glcQuery .= " history_id NOT IN (" . $deletedQuery . ") AND type='CREATED'";
+    $glcQuery .= " journal.history_id NOT IN (" . $deletedQuery . ") AND type='CREATED'";
     $glcQuery .= " AND glacier.start_time < DATETIME(" . $cleanTime->epoch . ", 'unixepoch')";
     
     $self->log('debug')->debug("Query: ", $glcQuery);
         
     my @glcBackups = @{ $self->localDbh->selectall_arrayref($glcQuery, { Slice => {} }) };
     
-    $self->log('debug')->debug("Found backups older than " . $time . " days: ", sub { Dumper(\@glcBackups) });
+    $self->log('debug')->debug("Found backups older than " . $timeNum . " $units->{$unit}: ", sub { Dumper(\@glcBackups) });
         
     $self->log('base')->info("Starting cleanup");
        
@@ -218,7 +245,7 @@ sub clean_rmt {
     
         $j->open_for_write();
 
-        my @deleteFiles = map { $_->{'history_id'} } @glcBackups;
+        my @deleteFiles = map { $_->{'hist_id'} } @glcBackups;
 
         my @filelist = map { 
                                 {
@@ -271,6 +298,7 @@ sub get {
     my $uuid = $params{'uuid'};
     my $config = $params{'config'};
     my $bkpDir = $params{'bkpDir'};
+    my $location = $params{'location'};
     my $chain = [];        
     my %journal_opts = ( 'journal_encoding' => 'UTF-8' );
     
@@ -323,7 +351,7 @@ sub get {
     
     for my $chainBackup(@$chain) {
 
-        my $restoredFile = $j->absfilename($chainBackup->{'relfilename'});
+        my $restoredFile = $location . '/' . $chainBackup->{'relfilename'};
         my ($file, $directory) = fileparse($restoredFile, '.xb.*');
 
         if( ! -d $directory ) {
@@ -343,7 +371,7 @@ sub get {
                 return App::MtAws::QueueJob::Retrieve->new(
                         'relfilename' => $rec->{'relfilename'}, 
                         'archive_id' => $rec->{'archive_id'},
-                        'filename' => $j->absfilename($rec->{'relfilename'})
+                        'filename' => $location . '/' . $rec->{'relfilename'}
                 );
             } else {
                 return;
@@ -357,7 +385,7 @@ sub get {
     });
     
     my %filelist = map { 
-                            $_->{'filename'} = $j->absfilename($_->{'relfilename'});
+                            $_->{'filename'} = $location . '/' . $_->{'relfilename'};
                             $_->{'archive_id'} => $_ 
                         } @backupChain;
     
@@ -382,7 +410,7 @@ sub get {
             
         my $presence = {};
         my $unpresent = {};
-        
+
         for my $downFile( values(%filelist) ) {
             if( -f $downFile->{'filename'} ) {
                 $presence->{$downFile->{'archive_id'}} = $downFile;
@@ -402,7 +430,7 @@ sub get {
                 sleep 4 * 3600;
             } else {
                 sleep $interval;
-            }
+            } # if
             $iteration += $interval;
             next;
         } # if
@@ -414,6 +442,65 @@ sub get {
     } # while
     
 } # end sub get
+
+sub clean_journal {
+
+    my $self = shift;
+    my %params = @_;
+    my $time = $params{'time'};
+    my $config = $params{'config'};
+    my $bkpDir = $params{'bkpDir'};
+    my $units = {
+                    'h' => 'hours',
+                    'd' => 'days',
+                    'm' => 'minutes'
+                };
+    
+    $time =~ /(\d+)([hdm])/;
+    my $unit = $2;
+    my $timeNum = $1;
+    
+    if( ! exists($units->{$unit}) ) {
+        croak "Bad time unit!";
+    } # if
+    
+    my %journal_opts = ( 'journal_encoding' => 'UTF-8' );
+    
+    my $j = Backup::Glacier::Journal->new(
+                                      %journal_opts, 
+                                      'journal_file' => $config->{'journal'}, 
+                                      'root_dir' => $bkpDir
+                                  );
+                                  
+    my $now = DateTime->now();
+    $now->set_time_zone('UTC');
+    my $cleanTime = $now->subtract( $units->{$unit} => $timeNum );
+    
+    $self->log('base')->info("Selecting journal entries older than ", $timeNum, $units->{$unit});
+
+    my $subQuery = "SELECT archive_id FROM journal WHERE";
+    $subQuery .= " journal.time < " . $cleanTime->epoch . " AND type='DELETED'";
+    $subQuery .= " AND history_id NOT IN (SELECT history_id FROM glacier)";
+    $subQuery .= " GROUP BY archive_id";
+    
+    my $query = "SELECT * FROM journal WHERE archive_id IN (" . $subQuery . ")";
+    
+    $self->log('debug')->debug("Query: ", $query);
+    
+    my @deletedEntries = @{ $self->localDbh->selectall_arrayref($query, { Slice => {} }) };
+    
+    $self->log('debug')->debug("Dumping old entries from journal: ", sub { Dumper(\@deletedEntries)});
+    
+    $self->log('base')->info("Deleting old entries from journal");
+    
+    $query = "DELETE FROM journal WHERE archive_id IN (" . $subQuery . ")";
+    
+    $self->log('debug')->debug("Query: ", $query);
+
+    my $sth = $self->localDbh->prepare($query);
+    $sth->execute();
+    
+} # end sub clean_journal
 
 sub tbl {
 
@@ -521,63 +608,23 @@ sub getGlacierBackupChain {
 
     my $self            = shift;
     my %params          = @_;
-    my $backupsInfo     = $params{'backupsInfo'};
     my $uuid            = $params{'uuid'};
-    my $chain           = $params{'chain'};
-    my $currentBackup   = $backupsInfo->{$uuid};
-
-    # we reduce array of backups by previous uuid
-    delete $backupsInfo->{$uuid};
-
-    my @candidates = ();
-    my $closestCandidate = {};
-
-    # we want to find backup which has start lsn same as end_lsn of previous
-    # backup
-    for my $backup(values %$backupsInfo) {    
-
-        if( $backup->{'innodb_to_lsn'} == $currentBackup->{'innodb_from_lsn'} ) {
-            push(@candidates, $backup);
-        } # if
-
-    } # for
-
-    # if there are more than one such backups, we sort them and choose the
-    # one which is in time closest to our previous backup
-    if( scalar(@candidates) > 1 ) {
-        
-        my %timeDiffs = ();
-        
-        for my $candidate(@candidates) {
-            my $diff = $currentBackup->{'start_unix_time'} - $candidate->{'start_unix_time'};
-            $timeDiffs{$diff} = $candidate;
-        } # for
-
-        my @sortedDiffs = sort{ $a <=> $b } keys %timeDiffs;
-        my $minDiff = $sortedDiffs[scalar(@sortedDiffs) - 1];
-
-        $closestCandidate = $timeDiffs{$minDiff};
-
-    } else {
-        $closestCandidate = $candidates[0];
-    } # if
-
-    push(@$chain, $closestCandidate);
+ 
+    my $histIdQuery = "SELECT parent_id FROM glacier WHERE uuid='" . $uuid . "'";
+    my $timeQuery = "SELECT start_time FROM glacier WHERE uuid='" . $uuid . "'";
     
-    if( ! defined($closestCandidate->{'incremental'}) ) {
-        croak "Invalid data, missing incremental field, hint: missing backup in backup chain?";
-    } # if
-
-    # if we didn't reach full backup we need to find it's parent
-    if( $closestCandidate->{'incremental'} eq 'Y' ) {
-        $self->getGlacierBackupChain(
-                                'backupsInfo' => $backupsInfo, 
-                                'uuid' => $closestCandidate->{'uuid'}, 
-                                'chain' => $chain
-                            );
-    } # if
-
-    return $chain;
+    my $query = "SELECT * FROM glacier WHERE history_id IN";
+    $query .= " (" . $histIdQuery . ") OR parent_id IN (" . $histIdQuery . ")";
+    $query .= " AND start_time <= (" . $timeQuery . ")";
+    $query .= " ORDER BY innodb_to_lsn ASC, start_time ASC";
+    
+    $self->log('debug')->debug("Query: ", $query);
+    
+    my @chain = @{ $self->localDbh->selectall_arrayref($query, { Slice => {} }) };
+    
+    $self->log('debug')->debug("Dumping backup chain: ", sub { Dumper(@chain) });
+    
+    return \@chain;
 
 } # end sub getGlacierBackupChain
 
