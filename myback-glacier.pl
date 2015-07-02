@@ -44,7 +44,8 @@ my $allowedActions = {
                         'clean' => 1,
                         'clean_rmt' => 1,
                         'clean_journal' => 1,
-                        'restore' => 1
+                        'get' => 1,
+                        'list' => 1,
                     };
 
 my $allowedFormats = {
@@ -66,6 +67,15 @@ GetOptions(
 
 pod2usage(-verbose => 3) if $help;
 pod2usage(1) if !$action;
+pod2usage(-verbose => 3) if !defined( $allowedActions->{$action} );
+
+pod2usage(1) if ( $action eq 'sync' && !($dir) );
+pod2usage(1) if ( $action eq 'clean' && !($dir && $time) );
+pod2usage(1) if ( $action eq 'clean_rmt' && !($dir && $time) );
+pod2usage(1) if ( $action eq 'clean_journal' && !($dir && $time) );
+pod2usage(1) if ( $action eq 'get' && !($dir && $id && $location) );
+pod2usage(1) if ( $action eq 'list' && !($dir && $format) );
+pod2usage(1) if ( $action eq 'list' && !defined( $allowedFormats->{$format} ) );
 
 my $configEngine = App::MtAws::ConfigEngine->new();
 my $config = $configEngine->read_config($glcConfigPath);
@@ -93,11 +103,9 @@ __END__
 
 =head1 SYNOPSIS
 
-        myback [--help|-h] [--action|-a] action [--dir|-d] path [--host|-h] host 
-                [--type|-b] backup_type [--user|-u] database_user
-                [--pass|-s] password [--loc|-l] location_of_mysql_dir
-                [--id|-i] id_of_backup [--dbname|-n] database_name
-                [--socket|o] socket
+        myback [--help|-h] [--action|-a] action [--dir|-d] path 
+                [--loc|-l] location_of_mysql_dir [--time|-t] time
+                [--id|-i] id_of_backup [--format|f] output format
 
 =head1 DESCRIPTION
 
@@ -115,38 +123,68 @@ __END__
 
     Can be one of these:
     
-    backup
-        creates local backup to the directory dir
-        requires: dir, user, password, backup_type, name of database host
-        optional: socket
+    sync
+        uploads all files, which are not yet in glacier, in dir recursively to the
+        glacier
+        requires: dir
         
-    restore
-        creates local restore to the directory loc
-        requires: dir, host, id, location
+    get
+        retrieves and downloads files with uuid as supplied id to the directory
+        specified in location parameter
+        requires: dir, id, location
                 
+    clean
+        select all entries which have backup start older than supplied time,
+        checks if entries present on filesystem, if yes check if present 
+        in glacier table, if yes delete from database and also from filesystem, 
+        if not present on fs nor in glacier delete just entry in database
+        requires: dir, time
+        
+    clean_rmt
+        select all entries from glacier table which have backup start older
+        than supplied time, delete them from glacier table
+        requires: dir, time
+        
+    clean_journal
+        selects all archive entries from journal table, which have delete entries
+        older than supplied time and are not present in glacier table
+        requires: dir, time
+        
 =item B<--dir|-d>
 
-        This is path to the directory, where backups are present, whether remote
-        or local
+    This is path to the directory, where backups are present
         
 =item B<--loc|-l>
-        this is directory path where restores/dumps are decompressed and restored
+
+    this is directory path where backups are downloaded
         
 =item B<--id|-i>
-        every backup has uniq uuid
+
+    every backup has uniq uuid
+  
+=item B<--time|t>
+
+    number of days/hours/minutes in one of format: 1d or 24h or 1440m
+   
+=item B<--format|f>
+
+    output format, currently supported
+
+    tbl - table
+    lst - list
         
 =back
 
 =head1 AUTHOR
 
-        PAVOL IPOTH <pavol.ipoth@gmail.com>
+    PAVOL IPOTH <pavol.ipoth@gmail.com>
 
 =head1 COPYRIGHT
 
-        Pavol Ipoth, ALL RIGHTS RESERVED, 2015
+    Pavol Ipoth, ALL RIGHTS RESERVED, 2015
 
 =head1 License
 
-        GPLv3
+    GPLv3
 
 =cut
