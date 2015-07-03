@@ -98,7 +98,9 @@ sub sync {
 	});
         
     } catch {
-        croak @_ || $_;
+        my $error = @_ || $_;
+        $self->log->error("There was some problem: ", $error);
+        croak $error;
         exit(1);
     };
     
@@ -146,6 +148,7 @@ sub clean {
     my $timeNum = $1;
     
     if( ! exists($units->{$unit}) ) {
+        $self->log->error("Bad time unit: ", $unit);
         croak "Bad time unit!";
     } # if
     
@@ -168,8 +171,16 @@ sub clean {
     $query .= " DATETIME(" . $cleanTime->epoch . ", 'unixepoch')";
     
     $self->log('debug')->debug("Query: ", $query);
-        
-    my @localBackups = @{ $self->localDbh->selectall_arrayref($query, { Slice => {} }) };
+    
+    my @localBackups = ();
+    
+    try {
+        @localBackups = @{ $self->localDbh->selectall_arrayref($query, { Slice => {} }) };
+    } catch {
+        my $error = @_ || $_;
+        $self->log->error("Error: ", $error, " Query: " . $query);
+        croak "Error: " . $error;
+    };
     
     $self->log('debug')->debug("Found backups older than " . $timeNum . " $units->{$unit}: ", sub { Dumper(\@localBackups) });
         
@@ -195,7 +206,15 @@ sub clean {
         $self->log('base')->info("Checking if uuid " . $localBackup->{'uuid'} . " is already in glacier");
         $self->log('debug')->debug("Query: ", $glcQuery);
         
-        my @countRecs = @{ $self->localDbh->selectall_arrayref($glcQuery, { Slice => {} }) };
+        my @countRecs = 0;
+        
+        try {
+            @countRecs = @{ $self->localDbh->selectall_arrayref($glcQuery, { Slice => {} }) };
+        } catch {
+            my $error = @_ || $_;
+            $self->log->error("Error: ", $error, " Query: " . $glcQuery);
+            croak "Error: " . $error;
+        };
         
         $self->log('debug')->debug("Found backups in glacier: ", $countRecs[0]->{'rec_count'});
         
@@ -212,16 +231,32 @@ sub clean {
             
             $self->log('base')->info("Removing from history: ", $localBackup->{'uuid'});
             
-            my $sth = $self->localDbh->prepare($delQuery);
-            $sth->execute();
+            try {
+                my $sth = $self->localDbh->prepare($delQuery);
+                $sth->execute();
+            } catch {
+                my $error = @_ || $_;
+                $self->log->error("Error: ", $error, " Query: " . $delQuery);
+                croak "Error: " . $error;
+            }; # try
             
             push(@deletedBackups, $localBackup);
             
         } elsif( scalar(@files) == 0 && $countRecs[0]->{'rec_count'} == 0) {
+            
             $self->log('base')->info("File not on filesytem nor in glacier, removing from history: ", $localBackup->{'uuid'});
-            my $sth = $self->localDbh->prepare($delQuery);
-            $sth->execute();
+            
+            try {
+                my $sth = $self->localDbh->prepare($delQuery);
+                $sth->execute();
+            } catch {
+                my $error = @_ || $_;
+                $self->log->error("Error: ", $error, " Query: " . $delQuery);
+                croak "Error: " . $error;
+            }; # try
+            
             push(@deletedBackups, $localBackup);
+            
         } # if
         
     } # for
@@ -250,6 +285,7 @@ sub clean_rmt {
     my $timeNum = $1;
     
     if( ! exists($units->{$unit}) ) {
+        $self->log->error("Bad time unit: ", $unit);
         croak "Bad time unit!";
     } # if
     
@@ -277,7 +313,15 @@ sub clean_rmt {
     
     $self->log('debug')->debug("Query: ", $glcQuery);
         
-    my @glcBackups = @{ $self->localDbh->selectall_arrayref($glcQuery, { Slice => {} }) };
+    my @glcBackups = ();
+    
+    try {
+        @glcBackups = @{ $self->localDbh->selectall_arrayref($glcQuery, { Slice => {} }) };
+    } catch {
+        my $error = @_ || $_;
+        $self->log->error("Error: ", $error, " Query: " . $glcQuery);
+        croak "Error: " . $error;
+    };
     
     $self->log('debug')->debug("Found backups older than " . $timeNum . " $units->{$unit}: ", sub { Dumper(\@glcBackups) });
         
@@ -295,33 +339,46 @@ sub clean_rmt {
                                    'relfilename' => $_->{'relfilename'}
                                 } 
                             } @glcBackups;
-                            
-        with_forks(1, $config, sub {
         
-            my $ft = App::MtAws::QueueJob::Iterator->new(iterator => sub {
-                    if (my $rec = shift @filelist) {
-                            return App::MtAws::QueueJob::Delete->new(
-                                    'relfilename' => $rec->{'relfilename'}, 
-                                    'archive_id' => $rec->{'archive_id'}
-                            );
-                    } else {
-                            return;
-                    }
+        try {
+            with_forks(1, $config, sub {
+
+                my $ft = App::MtAws::QueueJob::Iterator->new(iterator => sub {
+                        if (my $rec = shift @filelist) {
+                                return App::MtAws::QueueJob::Delete->new(
+                                        'relfilename' => $rec->{'relfilename'}, 
+                                        'archive_id' => $rec->{'archive_id'}
+                                );
+                        } else {
+                                return;
+                        }
+                });
+
+                my ($R) = fork_engine->{'parent_worker'}->process_task($ft, $j);
+
+                die unless $R;
+
             });
-
-            my ($R) = fork_engine->{'parent_worker'}->process_task($ft, $j);
-
-            die unless $R;
-            
-        });
+        } catch {
+            my $error = @_ || $_;
+            $self->log->error("Error: ", $error);
+            croak "Error: " . $error;
+        };
         
         $self->log('base')->info("Deleting entries from glacier history");
 
         my $deleteQuery = "DELETE FROM glacier WHERE history_id IN";
         $deleteQuery .= " (" . join(',', @deleteFiles) . ")";
-        my $sth = $j->{'dbh'}->prepare($deleteQuery);
-        $sth->execute();
-
+        
+        try {
+            my $sth = $j->{'dbh'}->prepare($deleteQuery);
+            $sth->execute();
+        } catch {
+            my $error = @_ || $_;
+            $self->log->error("Error: ", $error, " Query: " . $deleteQuery);
+            croak "Error: " . $error;
+        }; # try
+        
         $j->close_for_write();
     
     } # if
@@ -357,6 +414,7 @@ sub get {
     $self->log('debug')->debug("Dumping backup info: ", sub { Dumper($backups) });
     
     if( scalar(@$backups) > 1 ) {
+        $self->log->error("Found more than one entry for uuid in glacier history: ", $uuid);
         croak "Found more than one entry for uuid in glacier history: " . $uuid;
     } # if
     
@@ -407,24 +465,30 @@ sub get {
     
     my @backupChain = @$chain;
     
-    with_forks( !$config->{'dry-run'}, $config, sub {
-        my $ft = App::MtAws::QueueJob::Iterator->new(iterator => sub {
-            if (my $rec = shift @$chain) {
-                return App::MtAws::QueueJob::Retrieve->new(
-                        'relfilename' => $rec->{'relfilename'}, 
-                        'archive_id' => $rec->{'archive_id'},
-                        'filename' => $location . '/' . $rec->{'relfilename'}
-                );
-            } else {
-                return;
-            } # if
-        });
+    try {
+        with_forks( !$config->{'dry-run'}, $config, sub {
+            my $ft = App::MtAws::QueueJob::Iterator->new(iterator => sub {
+                if (my $rec = shift @$chain) {
+                    return App::MtAws::QueueJob::Retrieve->new(
+                            'relfilename' => $rec->{'relfilename'}, 
+                            'archive_id' => $rec->{'archive_id'},
+                            'filename' => $location . '/' . $rec->{'relfilename'}
+                    );
+                } else {
+                    return;
+                } # if
+            });
 
-        $j->open_for_write();
-        my ($R) = fork_engine->{parent_worker}->process_task($ft, $j);
-        die unless $R;
-        $j->close_for_write();
-    });
+            $j->open_for_write();
+            my ($R) = fork_engine->{parent_worker}->process_task($ft, $j);
+            die unless $R;
+            $j->close_for_write();
+        });
+    } catch {
+        my $error = @_ || $_;
+        $self->log->error("Error: ", $error);
+        croak "Error: " . $error;
+    };
     
     my %filelist = map { 
                             $_->{'filename'} = $location . '/' . $_->{'relfilename'};
@@ -439,14 +503,20 @@ sub get {
     
         $self->log('base')->info("Downloading archives");
             
-        with_forks( !$config->{'dry-run'}, $config, sub {
-            my $fad = App::MtAws::QueueJob::FetchAndDownload->new(
-                                                                    'file_downloads' => {}, 
-                                                                    'archives' => \%filelist
-                                                                );
-            my ($H) = fork_engine->{'parent_worker'}->process_task($fad, $j);
-            die unless $H;
-        });
+        try {
+            with_forks( !$config->{'dry-run'}, $config, sub {
+                my $fad = App::MtAws::QueueJob::FetchAndDownload->new(
+                                                                        'file_downloads' => {}, 
+                                                                        'archives' => \%filelist
+                                                                    );
+                my ($H) = fork_engine->{'parent_worker'}->process_task($fad, $j);
+                die unless $H;
+            });
+        } catch {
+            my $error = @_ || $_;
+            $self->log->error("Error: ", $error);
+            croak "Error: " . $error;
+        };
         
         $self->log('base')->info("Checking if archives were downloaded, iteration is: ", $iteration, " seconds");
             
@@ -503,6 +573,7 @@ sub clean_journal {
     my $timeNum = $1;
     
     if( ! exists($units->{$unit}) ) {
+        $self->log->error("Bad time unit: ", $unit);
         croak "Bad time unit!";
     } # if
     
@@ -529,7 +600,15 @@ sub clean_journal {
     
     $self->log('debug')->debug("Query: ", $query);
     
-    my @deletedEntries = @{ $self->localDbh->selectall_arrayref($query, { Slice => {} }) };
+    my @deletedEntries = ();
+    
+    try {
+        @deletedEntries = @{ $self->localDbh->selectall_arrayref($query, { Slice => {} }) };
+    } catch {
+        my $error = @_ || $_;
+        $self->log->error("Error: ", $error, " Query: " . $query);
+        croak "Error: " . $error;
+    };
     
     $self->log('debug')->debug("Dumping old entries from journal: ", sub { Dumper(\@deletedEntries)});
     
@@ -539,8 +618,14 @@ sub clean_journal {
     
     $self->log('debug')->debug("Query: ", $query);
 
-    my $sth = $self->localDbh->prepare($query);
-    $sth->execute();
+    try {
+        my $sth = $self->localDbh->prepare($query);
+        $sth->execute();
+    } catch {
+        my $error = @_ || $_;
+        $self->log->error("Error: ", $error, " Query: " . $query);
+        croak "Error: " . $error;
+    }; # try
     
 } # end sub clean_journal
 
@@ -643,8 +728,14 @@ sub getGlacierBackupsInfo {
     
     $self->log('debug')->debug("Query: ", $getQuery);
     
-    @backupsInfo = @{ $self->localDbh->selectall_arrayref($getQuery, { Slice => {} }) };
-
+    try {
+        @backupsInfo = @{ $self->localDbh->selectall_arrayref($getQuery, { Slice => {} }) };
+    } catch {
+        my $error = @_ || $_;
+        $self->log->error("Error: ", $error, " Query: " . $getQuery);
+        croak "Error: " . $error;
+    }; # try
+    
     return \@backupsInfo;
 
 } # end sub getRmtBackupsInfo
@@ -665,7 +756,15 @@ sub getGlacierBackupChain {
     
     $self->log('debug')->debug("Query: ", $query);
     
-    my @chain = @{ $self->localDbh->selectall_arrayref($query, { Slice => {} }) };
+    my @chain = ();
+    
+    try {
+        @chain = @{ $self->localDbh->selectall_arrayref($query, { Slice => {} }) };
+    } catch {
+        my $error = @_ || $_;
+        $self->log->error("Error: ", $error, " Query: " . $query);
+        croak "Error: " . $error;
+    };
     
     $self->log('debug')->debug("Dumping backup chain: ", sub { Dumper(@chain) });
     
@@ -701,6 +800,7 @@ sub calcPartSize {
     my $maxPartSize = 4 * 1024;
     
     if( $fileSize > $maxSize ) {
+        $self->log->error("File size is bigger than max size: ", $maxSize);
         croak "File size is bigger than max size: " . $maxSize;
     } # if
     
@@ -717,15 +817,15 @@ no Moose::Role;
 
 =head1 AUTHOR
 
-        PAVOL IPOTH <pavol.ipoth@gmail.com>
+    PAVOL IPOTH <pavol.ipoth@gmail.com>
 
 =head1 COPYRIGHT
 
-        Pavol Ipoth, ALL RIGHTS RESERVED, 2015
+    Pavol Ipoth, ALL RIGHTS RESERVED, 2015
 
 =head1 License
 
-        GPLv3
+    GPLv3
 
 =cut
 
