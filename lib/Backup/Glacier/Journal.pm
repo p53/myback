@@ -19,76 +19,80 @@ use App::MtAws::Utils;
 
 sub read_journal {
 
-	my ($self, %args) = @_;
-	confess unless defined $args{'should_exist'};
-	confess unless length($self->{'journal_file'});
-	$self->{'last_read_time'} = time();
-	$self->{'active_retrievals'} = {} if $self->{'use_active_retrievals'};
-        
-	my $binary_filename = binaryfilename $self->{'journal_file'};
-        
-	if ($args{should_exist} && !-e $binary_filename) {
-            confess;
-	} elsif (-e $binary_filename) {
-                          
-            my @glcBkpsPresent = ();
-            my @glcRetrieveJobs = ();
-            
-            my $dbh = DBI->connect(
-                        "dbi:SQLite:dbname=" . $self->{'journal_file'},
-                        "", 
-                        "",
-                        {'RaiseError' => 1}
-                    );
+    my ($self, %args) = @_;
+    confess unless defined $args{'should_exist'};
+    confess unless length($self->{'journal_file'});
+    $self->{'last_read_time'} = time();
+    $self->{'active_retrievals'} = {} if $self->{'use_active_retrievals'};
 
-            my $deletedQuery = "SELECT history_id FROM journal";
-            $deletedQuery .= " WHERE type='DELETED'";
+    my $binary_filename = binaryfilename $self->{'journal_file'};
 
-            my $query = "SELECT * FROM journal WHERE history_id NOT IN";
-            $query .= " (" . $deletedQuery . ") AND type='CREATED' ORDER BY mtime ASC";
-            print $query;
-            try {
-                @glcBkpsPresent = @{ $dbh->selectall_arrayref($query, { Slice => {} }) };
-            } catch {
-                confess @_ || $_;
-            };
+    if ($args{should_exist} && !-e $binary_filename) {
+        confess;
+    } elsif (-e $binary_filename) {
 
-            for my $glcBkpPresent(@glcBkpsPresent) {
-            
-                $self->_add_archive({
-                        'relfilename' => $glcBkpPresent->{'relfilename'},
-                        'time' => $glcBkpPresent->{'time'}, # numify
-                        'archive_id' => $glcBkpPresent->{'archive_id'},
-                        'size' => $glcBkpPresent->{'size'}, # numify
-                        'mtime' => defined($glcBkpPresent->{'mtime'}) ? $glcBkpPresent->{'mtime'} : undef,
-                        'treehash' => $glcBkpPresent->{'treehash'},
-                });
-                
-            } # for
-            
-            my $retrieveQuery = "SELECT * FROM journal WHERE type='RETRIEVE_JOB'";
-            
-            try {
-                @glcRetrieveJobs = @{ $dbh->selectall_arrayref($retrieveQuery, { Slice => {} }) };
-            } catch {
-                confess @_ || $_;
-            };
-            
-            for my $job(@glcRetrieveJobs) {
-            
-                $self->_retrieve_job(
-                                        $glcRetrieveJobs->{'time'},
-                                        $glcRetrieveJobs->{'archive_id'},
-                                        $glcRetrieveJobs->{'job_id'}
-                                    );
-                                    
-            } # for
-            
-	} # if
-        
-	$self->_index_archives_as_files();
-	
-        return;
+        my @glcBkpsPresent = ();
+        my @glcRetrieveJobs = ();
+
+        my $dbh = DBI->connect(
+                    "dbi:SQLite:dbname=" . $self->{'journal_file'},
+                    "", 
+                    "",
+                    {'RaiseError' => 1}
+                );
+
+        my $deletedQuery = "SELECT journal.history_id FROM journal";
+        $deletedQuery .= " WHERE type='DELETED'";
+
+        my $query = "SELECT * FROM journal JOIN glacier ON";
+        $query .= " journal.history_id = glacier.history_id WHERE";
+        $query .= " journal.history_id NOT IN (" . $deletedQuery . ")";
+        $query .= " AND type='CREATED' ORDER BY mtime ASC";
+
+        try {
+            @glcBkpsPresent = @{ $dbh->selectall_arrayref($query, { Slice => {} }) };
+        } catch {
+            confess @_ || $_;
+        };
+
+        $self->{'archive_sorted'} = \@glcBkpsPresent;
+
+        for my $glcBkpPresent(@glcBkpsPresent) {
+
+            $self->_add_archive({
+                    'relfilename' => $glcBkpPresent->{'relfilename'},
+                    'time' => $glcBkpPresent->{'time'}, # numify
+                    'archive_id' => $glcBkpPresent->{'archive_id'},
+                    'size' => $glcBkpPresent->{'size'}, # numify
+                    'mtime' => defined($glcBkpPresent->{'mtime'}) ? $glcBkpPresent->{'mtime'} : undef,
+                    'treehash' => $glcBkpPresent->{'treehash'},
+            });
+
+        } # for
+
+        my $retrieveQuery = "SELECT * FROM journal WHERE type='RETRIEVE_JOB'";
+
+        try {
+            @glcRetrieveJobs = @{ $dbh->selectall_arrayref($retrieveQuery, { Slice => {} }) };
+        } catch {
+            confess @_ || $_;
+        };
+
+        for my $job(@glcRetrieveJobs) {
+
+            $self->_retrieve_job(
+                                    $glcRetrieveJobs->{'time'},
+                                    $glcRetrieveJobs->{'archive_id'},
+                                    $glcRetrieveJobs->{'job_id'}
+                                );
+
+        } # for
+
+    } # if
+
+    $self->_index_archives_as_files();
+
+    return;
         
 } # end sub read_journal
 

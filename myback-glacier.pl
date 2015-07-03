@@ -109,8 +109,6 @@ __END__
 
 =head1 DESCRIPTION
 
-
-
 =head1 OPTIONS
 
 =over 8

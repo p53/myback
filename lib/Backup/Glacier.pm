@@ -12,6 +12,7 @@ use File::Path;
 use File::Basename;
 use Data::Dumper;
 use DBI;
+use POSIX;
 use YAML::Tiny;
 use File::stat;
 use Text::SimpleTable;
@@ -51,8 +52,51 @@ sub sync {
     $self->log('base')->info("Syncing files to glacier");
     
     try {
+    
         $self->log('debug')->debug("Syncing files to glacier with config: ", sub { Dumper($config) });
-        App::MtAws::Command::Sync::run($config, $j);
+        
+        with_forks(!$config->{'dry-run'}, $config, sub {
+        
+            my $read_journal_opts = {'new' => 1};
+            my @joblist;
+            
+            $j->read_journal(should_exist => 0);
+            $j->read_files($read_journal_opts, $config->{'max-number-of-files'});
+            $j->open_for_write();
+            
+            if ($config->{new}) {
+                    my $itt = sub { 
+                        if (my $rec = shift @{ $j->{'listing'}{'new'} }) {
+                                my $absfilename = $j->absfilename($rec->{'relfilename'});
+                                my $relfilename = $rec->{'relfilename'};
+                                my $size = stat($absfilename)->size;
+                                my $partSize = $self->calcPartSize('size' => $size);
+                                App::MtAws::QueueJob::Upload->new(
+                                    'filename' => $absfilename, 
+                                    'relfilename' => $relfilename, 
+                                    'partsize' => $partSize, 
+                                    'delete_after_upload' => 0
+                                );
+                        } else {
+                                return;
+                        } # if
+                    };
+                    push @joblist, App::MtAws::QueueJob::Iterator->new(iterator => $itt);
+            } # if
+
+            if (scalar @joblist) {
+                    my $lt = do {
+                            confess unless @joblist >= 1;
+                            App::MtAws::QueueJob::Iterator->new(iterator => sub { shift @joblist });
+                    };
+                    my ($R) = fork_engine->{parent_worker}->process_task($lt, $j);
+                    confess unless $R;
+            } # if
+            
+            $j->close_for_write();
+            
+	});
+        
     } catch {
         croak @_ || $_;
         exit(1);
@@ -77,11 +121,9 @@ sub list {
                                   );
       
     $j->read_journal('should_exist' => 0);
+    my $data = $j->{'archive_sorted'};
     
-    my $data = $j->{'archive_h'};
-    my @showData = values($data);
-    
-    $self->$format('data' => \@showData);
+    $self->$format('data' => $data);
 
 } # end sub list
 
@@ -507,42 +549,45 @@ sub tbl {
     my $self = shift;
     my %params = @_;
     my $data = $params{'data'};
-
-    my @units = ('b','Kb','Mb','Gb','Tb','Pb','Eb');
     
     my $bkpTbl = Text::SimpleTable->new(
-                                        [19, 'time'],
-                                        [19, 'mtime'],
-                                        [6, 'size'],
-                                        [12, 'treehash'],
                                         [19, 'relfilename'],
-                                        [12, 'archive_id']
+                                        [19, 'start_time'],
+                                        [36, 'uuid'],
+                                        [10, 'bkp_size'],
+                                        [1, 'p'],
+                                        [1, 'i'],
+                                        [1, 't' ],
+                                        [1, 'c' ]
                                     );
+    
+    my $sum = 0;
     
     for my $info(@$data) {
     
-        my $sizeLength = length($info->{'size'});
-        my $order = int($sizeLength / 3);
-        $order = ($sizeLength % 3) > 0 ? $order : ($order -1);
-        my $convUnit = ($order < 0) ? '' : $units[$order];
-        
-        my $converted = $info->{'size'} >> ( $order * 10 );
-        
-        my $time = DateTime->from_epoch( epoch => $info->{'time'} );
-        my $mtime = DateTime->from_epoch( epoch => $info->{'mtime'} );
+        my $converted = $self->prettySize( 'size' => $info->{'bkp_size'} );
         
         $bkpTbl->row(
-                        $time->ymd('-') . ' ' . $time->hms(':'),
-                        $mtime->ymd('-') . ' ' . $mtime->hms(':'),
-                        $converted . $convUnit,
-                        $info->{'treehash'},
                         $info->{'relfilename'},
-                        $info->{'archive_id'}
+                        $info->{'start_time'},
+                        $info->{'uuid'},
+                        $converted,
+                        $info->{'partial'},
+                        $info->{'incremental'},
+                        $info->{'compact'},
+                        $info->{'compressed'}
                     );
         $bkpTbl->hr;
+    
+        $sum += $info->{'bkp_size'};
         
     } # for
 
+    my $convSum = $self->prettySize( 'size' => $sum );
+    
+    $bkpTbl->row('','','',$convSum,'','','','');
+    $bkpTbl->hr;
+    
     print $bkpTbl->draw;
 
 } # end sub tbl
@@ -627,6 +672,46 @@ sub getGlacierBackupChain {
     return \@chain;
 
 } # end sub getGlacierBackupChain
+
+sub prettySize {
+
+    my $self = shift;
+    my %params = @_;
+    my $size = $params{'size'};
+    my @units = ('b','Kb','Mb','Gb','Tb','Pb','Eb');
+        
+    my $sizeLength = length($size);
+    my $order = int($sizeLength / 3);
+    $order = ($sizeLength % 3) > 0 ? $order : ($order -1);
+    my $convUnit = ($order < 0) ? '' : $units[$order];
+
+    my $converted = $size >> ( $order * 10 );
+        
+    return  $converted . $convUnit;
+    
+} # end sub prettySize
+
+sub calcPartSize {
+
+    my $self = shift;
+    my %params = @_;
+    my $fileSize = $params{'size'};
+    # max file size able to upload in glacier is 4Gx10000
+    my $maxSize = 40 * 1024 * 1024 * 1024 * 1024;
+    my $maxPartSize = 4 * 1024;
+    
+    if( $fileSize > $maxSize ) {
+        croak "File size is bigger than max size: " . $maxSize;
+    } # if
+    
+    my $percent = $fileSize * 100 / $maxSize;
+    my $partSize = $percent * $maxPartSize;
+    
+    my $ceiledPartSize = ceil($partSize) * 1024 * 1024;
+    
+    return $ceiledPartSize;
+    
+} # end sub calcPartSize
 
 no Moose::Role;
 
