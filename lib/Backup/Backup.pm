@@ -128,8 +128,14 @@ sub rmt_backup {
     
     $self->log('debug')->debug("Query: ", , sub { Dumper($query) });
     
-    @hostsInfo = @{ $self->localDbh->selectall_arrayref($query, { Slice => {} }) };
-
+    try {
+        @hostsInfo = @{ $self->localDbh->selectall_arrayref($query, { Slice => {} }) };
+    } catch {
+        my $error = @_ || $_;
+        $self->log->error("Error: ", $error, " Query: " . $query);
+        croak "Error: " . $error;
+    };
+    
     if( scalar(@hostsInfo) == 0 ) {
         $self->log->error("No such host!");
         croak "No such host!";
@@ -162,18 +168,12 @@ sub rmt_backup {
 
     my $shell = Term::Shell->new();
     my $result = '';
-    
-#   try{
+
     $lastBkpInfo = $self->{'bkpType'}->rmt_backup(
                                     'hostInfo' => $hostInfo, 
                                     'privKeyPath' => $privKeyPath,
                                     'bkpFileName' => $bkpFileName
                                 );
-#    } catch {
-#        File::Path::remove_tree($aliasBkpDir . "/" . $now);
-#        $self->log->error("Shell command failed! Message: ", $result->{'msg'});
-#        croak "Shell command failed! Message: " . $result->{'msg'};
-#    }; # try
     
     my $uuidFileName = $aliasBkpDir . "/" . $lastBkpInfo->{'uuid'} . ".xb." . $compSuffix;
     
@@ -353,8 +353,15 @@ sub dump_rmt {
     # so service command will work, we are stopping mysql server
     if( -S $params{'socket'} ) {
         $self->log('base')->info("Stoping mysql server");
-        $result = $shell->execCmd('cmd' => $stopDb, 'cmdsNeeded' => [ 'service' ]);
-        $shell->fatal($result);
+        
+        try {
+            $result = $shell->execCmd('cmd' => $stopDb, 'cmdsNeeded' => [ 'service' ]);
+            $shell->fatal($result);
+        } catch {
+            $self->log->error("Error while executing command, message: ", $result->{'msg'});
+            croak "Error while executing command, message: " . $result->{'msg'};
+        };
+        
     } # if
 
     $self->log('base')->info("Removing $location");
@@ -394,9 +401,14 @@ sub dump_rmt {
     # start our own mysql instance with innobackupex cnf config file,
     # we do it because some parameters on remote host might be different
     # from backup server and thus preventing start and dump on backup server
-    $result = $shell->execCmd('cmd' => $startDb, 'cmdsNeeded' => [ 'mysqld_safe' ], 'bg' => 1);
-    $shell->fatal($result);
-    
+    try {
+        $result = $shell->execCmd('cmd' => $startDb, 'cmdsNeeded' => [ 'mysqld_safe' ], 'bg' => 1);
+        $shell->fatal($result);
+    } catch {
+        $self->log->error("Error while executing command, message: ", $result->{'msg'});
+        croak "Error while executing command, message: " . $result->{'msg'};
+    };
+        
     $self->log('base')->info("Waiting for server start ", $timeout, ' seconds');
     
     my $loop = 0;
@@ -460,9 +472,14 @@ sub dump_rmt {
     # because we started it with mysqld_safe and with mysqladmin we could not
     # stop it either because we would not know mysql root password of previously 
     # restored backup
-    $shell = Term::Shell->new();
-    $result = $shell->execCmd('cmd' => $stopDbSafe, 'cmdsNeeded' => [ 'mysqladmin' ]);
-
+    try {
+        $shell = Term::Shell->new();
+        $result = $shell->execCmd('cmd' => $stopDbSafe, 'cmdsNeeded' => [ 'mysqladmin' ]);
+    } catch {
+        $self->log->error("Error while executing command, message: ", $result->{'msg'});
+        croak "Error while executing command, message: " . $result->{'msg'};
+    };
+    
     $shell->fatal($result);
         
     $self->log('base')->info("Dump successful");
@@ -575,8 +592,14 @@ sub getBackupsInfo {
 
     $self->log('debug')->debug("Query: ", $query);
     
-    @backupsInfo = @{ $dbh->selectall_arrayref($query, { Slice => {} }) };
-
+    try {
+        @backupsInfo = @{ $dbh->selectall_arrayref($query, { Slice => {} }) };
+    } catch {
+        my $error = @_ || $_;
+        $self->log->error("Error: ", $error, " Query: " . $query);
+        croak "Error: " . $error;
+    }; # try
+    
     $dbh->disconnect();
 
     return \@backupsInfo;
@@ -621,8 +644,14 @@ sub getRmtBackupsInfo {
     
     $self->log('debug')->debug("Query: ", $query);
     
-    @backupsInfo = @{ $self->localDbh->selectall_arrayref($query, { Slice => {} }) };
-
+    try {
+        @backupsInfo = @{ $self->localDbh->selectall_arrayref($query, { Slice => {} }) };
+    } catch {
+        my $error = @_ || $_;
+        $self->log->error("Error: ", $error, " Query: " . $query);
+        croak "Error: " . $error;
+    };
+    
     return \@backupsInfo;
 
 } # end sub getRmtBackupsInfo
@@ -792,20 +821,17 @@ sub tbl_rmt {
                                         [1, 'c' ]
                                     );
     
+    my $sum = 0;
+    
     for my $info(@$data) {
     
-        my $sizeLength = length($info->{'bkp_size'});
-        my $order = int($sizeLength / 3);
-        $order = ($sizeLength % 3) > 0 ? $order : ($order -1);
-        my $convUnit = ($order < 0) ? '' : $units[$order];
-        
-        my $converted = $info->{'bkp_size'} >> ( $order * 10 );
+        my $converted = $self->prettySize( 'size' => $info->{'bkp_size'} );
         
         $bkpTbl->row(
                         $info->{'alias'},
                         $info->{'start_time'},
                         $info->{'uuid'},
-                        $converted . $convUnit,
+                        $converted,
                         $info->{'partial'},
                         $info->{'incremental'},
                         $info->{'compact'},
@@ -813,8 +839,15 @@ sub tbl_rmt {
                     );
         $bkpTbl->hr;
         
+        $sum += $info->{'bkp_size'};
+        
     } # for
 
+    my $convSum = $self->prettySize( 'size' => $sum );
+    
+    $bkpTbl->row('','','',$convSum,'','','','');
+    $bkpTbl->hr;
+    
     print $bkpTbl->draw;
 
 } # end sub tbl_rmt

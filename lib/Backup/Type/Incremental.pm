@@ -217,6 +217,8 @@ sub restore_common {
     my $compUtil        = $self->{'compression'};
     my $result          = {};
 
+    File::Path::remove_tree($restoreLocation);
+    
     $self->log('debug')->debug("Dumping backups chain:", sub { Dumper($chain) });
 
     # we need to start restore from full backup                    
@@ -246,10 +248,14 @@ sub restore_common {
 
     my $decompCmd = $compUtil . " -c -d " . $bkpFile . "|xbstream -x -C " . $restoreLocation;
 
-    $result = $shell->execCmd('cmd' => $decompCmd, 'cmdsNeeded' => [ $compUtil, 'xbstream' ]);
-
-    $shell->fatal($result);
-
+    try {
+        $result = $shell->execCmd('cmd' => $decompCmd, 'cmdsNeeded' => [ $compUtil, 'xbstream' ]);
+        $shell->fatal($result);
+    } catch {
+        $self->log->error("Error while executing command, message: ", $result->{'msg'});
+        croak "Error while executing command, message: " . $result->{'msg'};
+    }; # try
+    
     $self->log('base')->info("Applying innodb logs on full backup");
 
     # applying logs on full backup
@@ -282,9 +288,13 @@ sub restore_common {
 
         my $decompCmd = $compUtil . " -c -d " . $bkpFile . "|xbstream -x -C " . $tmpRestoreLoc;
         
-        $result = $shell->execCmd('cmd' => $decompCmd, 'cmdsNeeded' => [ $compUtil, 'xbstream' ]);
-
-        $shell->fatal($result);
+        try {
+            $result = $shell->execCmd('cmd' => $decompCmd, 'cmdsNeeded' => [ $compUtil, 'xbstream' ]);
+            $shell->fatal($result);
+        } catch {
+            $self->log->error("Error while executing command, message: ", $result->{'msg'});
+            croak "Error while executing command, message: " . $result->{'msg'};
+        }; # try
     
         $self->log('base')->info("Incremental backup in dir $1 and uuid " . $prevBkp->{'uuid'});
 
@@ -319,8 +329,13 @@ sub restore_common {
     
     $decompCmd = $compUtil . " -c -d " . $bkpFile . "|xbstream -x -C " . $tmpRestoreLoc;
 
-    $result = $shell->execCmd('cmd' => $decompCmd, 'cmdsNeeded' => [ $compUtil, 'xbstream' ]);
-    $shell->fatal($result);
+    try {
+        $result = $shell->execCmd('cmd' => $decompCmd, 'cmdsNeeded' => [ $compUtil, 'xbstream' ]);
+        $shell->fatal($result);
+    } catch {
+        $self->log->error("Error while executing command, message: ", $result->{'msg'});
+        croak "Error while executing command, message: " . $result->{'msg'};
+    }; # try
     
     $lastIncrCmd .= $tmpRestoreLoc;
 
@@ -418,9 +433,13 @@ sub rmt_backup {
     $lastBkpInfoCmd .= ' -h ' . $hostInfo->{'local_host'} . ' -X';
     $lastBkpInfoCmd .= ' -S ' . $hostInfo->{'socket'} . "'";
     
-    $result = $shell->execCmd('cmd' => $lastBkpInfoCmd, 'cmdsNeeded' => [ 'ssh' ]);
-
-    $shell->fatal($result);
+    try {
+        $result = $shell->execCmd('cmd' => $lastBkpInfoCmd, 'cmdsNeeded' => [ 'ssh' ]);
+        $shell->fatal($result);
+    } catch {
+        $self->log->error("Error while executing command, message: ", $result->{'msg'});
+        croak "Error while executing command, message: " . $result->{'msg'};
+    }; # try
     
     my $lastBkpInfo = $self->mysqlXmlToHash('xml' => $result->{'msg'});
     $lastBkpInfo = $self->bkpInfoTimeToUTC('bkpInfo' => $lastBkpInfo);
@@ -441,9 +460,15 @@ sub rmt_backup {
     $query .=  "bkpconf_id)";
     $query .= " VALUES(" . join( ",", @escVals ). "," . $hostInfo->{'confId'} . ")";
 
-    my $sth = $self->localDbh->prepare($query);
-    $sth->execute();
-
+    try {
+        my $sth = $self->localDbh->prepare($query);
+        $sth->execute();
+    } catch {
+        my $error = @_ || $_;
+        $self->log->error("Error: ", $error, " Query: " . $query);
+        croak "Error: " . $error;
+    }; # try
+    
     return $lastBkpInfo;
     
 } # end sub rmt_backup
@@ -514,7 +539,15 @@ sub getBackupChain {
     
     $self->log('debug')->debug("Query: ", $query);
     
-    my @chain = @{ $self->localDbh->selectall_arrayref($query, { Slice => {} }) };
+    my @chain = ();
+    
+    try {
+        @chain = @{ $self->localDbh->selectall_arrayref($query, { Slice => {} }) };
+    } catch {
+        my $error = @_ || $_;
+        $self->log->error("Error: ", $error, " Query: " . $query);
+        croak "Error: " . $error;
+    };
     
     $self->log('debug')->debug("Dumping backup chain: ", sub { Dumper(@chain) });
     

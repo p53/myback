@@ -459,6 +459,45 @@ sub mysqlXmlToHash {
     
 } # end sub mysqlXmlToHash
 
+=item C<prettySize>
+
+Method accepts size in bytes and converts it to the nearest unit greater than
+zero
+
+param:
+
+    size integer - size in bytes
+    
+return:
+
+    $convWithUnit string - converted size with units
+    
+=cut
+
+sub prettySize {
+
+    my $self = shift;
+    my %params = @_;
+    my $size = $params{'size'};
+    my @units = ('b','Kb','Mb','Gb','Tb','Pb','Eb');
+        
+    my $sizeLength = length($size);
+    my $order = int($sizeLength / 3);
+    $order = ($sizeLength % 3) > 0 ? $order : ($order -1);
+    my $convUnit = ($order < 0) ? '' : $units[$order];
+
+    my $converted = sprintf("%.2f", $size/(1024**($order)));
+    my $convWithUnit = $converted . $convUnit;
+    
+    return $convWithUnit;
+    
+} # end sub prettySize
+
+sub DEMOLISH {
+    my $self = shift;
+    $self->localDbh->disconnect();  
+} # end sub DEMOLISH
+
 no Moose::Role;
 
 =head1 AUTHOR

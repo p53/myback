@@ -1,5 +1,22 @@
 package Backup::Glacier;
 
+=head1 NAME
+
+    Backup::Glacier - module for managing/uploading files to glacier AWS service
+
+=head1 SYNOPSIS
+
+    my $backupObj = Backup::Glacier->new();
+    my $configEngine = App::MtAws::ConfigEngine->new();
+    my $config = $configEngine->read_config($glcConfigPath);
+    
+    $backupObj->sync(     
+                            'config' => $config,
+                            'bkpDir' => '/backups',
+                        );
+
+=cut
+
 use Moose;
 use namespace::autoclean;
 use Carp;
@@ -29,6 +46,27 @@ use Backup::Glacier::Journal;
 
 with 'Backup::BackupInterface', 'MooseX::Log::Log4perl';
 
+=head1 METHODS
+
+=over 12
+
+=item C<sync>
+
+Syncs files in backup directory with amazon glacier, uploads only files which arent
+already in glacier and if they have different mtime
+
+param:
+
+    bkpDir string - requried parameter, location of backups
+    
+    config hash_ref - config options
+
+return:
+
+    void
+
+=cut
+
 sub sync {
 
     my $self = shift;
@@ -43,6 +81,8 @@ sub sync {
     
     my %journal_opts = ( 'journal_encoding' => 'UTF-8' );
     
+    # journal is used by App::MtAws library to track files, which are already
+    # in glacier and to track jobs
     my $j = Backup::Glacier::Journal->new(
                                       %journal_opts, 
                                       'journal_file' => $config->{'journal'}, 
@@ -55,6 +95,7 @@ sub sync {
     
         $self->log('debug')->debug("Syncing files to glacier with config: ", sub { Dumper($config) });
         
+        # use from App::MtAws library, creates workers to upload files
         with_forks(!$config->{'dry-run'}, $config, sub {
         
             my $read_journal_opts = {'new' => 1};
@@ -106,6 +147,24 @@ sub sync {
     
 } # end sub sync
 
+=item C<list>
+
+method lists all backups which are in glacier
+
+param:
+
+    bkpDir string - requried parameter, location of backups
+    
+    config hash_ref - config options
+    
+    format - output format
+    
+return:
+
+    void
+    
+=cut
+
 sub list {
 
     my $self = shift;
@@ -128,6 +187,27 @@ sub list {
     $self->$format('data' => $data);
 
 } # end sub list
+
+=item C<clean>
+
+Method removes files older than time (according history table) on local filesystem, 
+if file is on fs and present in glacier, if it is not in glacier nor fs, just history entry
+will be removed. If file is just on fs, but not in glacier, it wont be removed
+           
+param:
+
+    bkpDir string - requried parameter, location of backups
+    
+    config hash_ref - config options
+    
+    time - number of days, hours, minutes - determines how old entries/files
+           should be selected
+
+return:
+
+    $deletedBackups array_ref - list of deleted backups hash_refs
+    
+=cut
 
 sub clean {
 
@@ -163,10 +243,12 @@ sub clean {
     my $now = DateTime->now();
     $now->set_time_zone('UTC');
     
+    # we get time now minus number of days/hours/minutes
     my $cleanTime = $now->subtract( $units->{$unit} => $timeNum );
     
     $self->log('base')->info("Selecting old files from history");
     
+    # selecting all entries in history which are older than computed time
     my $query = "SELECT * from history WHERE start_time <";
     $query .= " DATETIME(" . $cleanTime->epoch . ", 'unixepoch')";
     
@@ -186,6 +268,12 @@ sub clean {
         
     $self->log('base')->info("Starting cleanup");
     
+    # for each entry/backup which is older than computed time, we check if in journal
+    # are entries with type created but not deleted for that backup, that would
+    # mean it is present in glacier, we also check if file is present on fs
+    # then if file is present on fs and in glacier we remove file on filesystem
+    # if it is not present on fs nor glacier, we just remove entry from history
+    # of backups, otherwise we do nothing
     for my $localBackup(@localBackups) {
         
         $self->log('base')->info("Checking if file with uuid present on filesystem: ", $localBackup->{'uuid'});
@@ -266,6 +354,26 @@ sub clean {
     return \@deletedBackups;
     
 } # end sub clean
+
+=item C<clean_rmt>
+
+Method removes files older than supplied time (according glacier history table)
+from glacier
+
+param:
+
+    bkpDir string - requried parameter, location of backups
+    
+    config hash_ref - config options
+    
+    time - number of days, hours, minutes - determines how old entries/files
+           should be selected
+
+return:
+
+    $glcBackups array_ref - list of deleted backups hash_refs
+
+=cut
 
 sub clean_rmt {
 
@@ -389,11 +497,29 @@ sub clean_rmt {
     
 } # end sub clean_rmt
 
+=item C<get>
+
+Method get retrievs and downloads file identified by uuid from glacier to
+supplied location
+
+param:
+
+    bkpDir string - requried parameter, location of backups
+    
+    config hash_ref - config options
+    
+    uuid string - uuid which identifies file
+    
+    location string - path where we should download file from glacier
+    
+return:
+
+=cut
+
 sub get {
     
     my $self = shift;
     my %params = @_;
-    my $time = $params{'time'};
     my $uuid = $params{'uuid'};
     my $config = $params{'config'};
     my $bkpDir = $params{'bkpDir'};
@@ -419,18 +545,6 @@ sub get {
     } # if
     
     if( $backups->[0]->{'incremental'} eq 'Y' ) {
-    
-        my $backupsInfo = {};
-        my $allBackups = $self->getGlacierBackupsInfo();
-
-        for my $bkp(@$allBackups) {
-            $backupsInfo->{$bkp->{'uuid'}} = $bkp;
-        } # for
-
-        if( !defined( $backupsInfo->{$uuid} ) ) {
-            $self->log->error("No backups with uuid $uuid!");
-            croak "No backups with uuid $uuid!";
-        } # if
         
         $self->log('base')->info("Getting backups info till nearest previous full backup");
 
@@ -438,9 +552,7 @@ sub get {
         # backups plus full backup and we are getting this info here, backups are
         # returned from newest to oldest
         $chain = $self->getGlacierBackupChain(
-                                        'backupsInfo' => $backupsInfo, 
-                                        'uuid' => $uuid, 
-                                        'chain' => $chain
+                                        'uuid' => $uuid
                                     );
         
     } # if
@@ -449,6 +561,7 @@ sub get {
 
     $self->log('debug')->debug("Dumping backup chain info: ", sub { Dumper($chain) });
     
+    # for each backup we need to create folder
     for my $chainBackup(@$chain) {
 
         my $restoredFile = $location . '/' . $chainBackup->{'relfilename'};
@@ -465,6 +578,7 @@ sub get {
     
     my @backupChain = @$chain;
     
+    # first we retrieve files
     try {
         with_forks( !$config->{'dry-run'}, $config, sub {
             my $ft = App::MtAws::QueueJob::Iterator->new(iterator => sub {
@@ -495,6 +609,8 @@ sub get {
                             $_->{'archive_id'} => $_ 
                         } @backupChain;
     
+    # we wait 4 hours to retrieve and then try downloadTimeout to download
+    # files with interval $interval
     my $downloadTimeout = 2 * 3600;
     my $iteration = 0;
     my $interval = 5 * 60;
@@ -555,6 +671,24 @@ sub get {
     
 } # end sub get
 
+=item C<clean_journal>
+
+Removes entries for archives, which already have delete statement in log older
+than specified time
+
+param:
+
+    bkpDir string - requried parameter, location of backups
+    
+    config hash_ref - config options
+    
+    time - number of days, hours, minutes - determines how old entries/files
+           should be selected
+           
+return:
+
+=cut
+
 sub clean_journal {
 
     my $self = shift;
@@ -591,6 +725,8 @@ sub clean_journal {
     
     $self->log('base')->info("Selecting journal entries older than ", $timeNum, $units->{$unit});
 
+    # we select achive entries which have delete entry older than specified time
+    # and they are not present in glacier history table
     my $subQuery = "SELECT archive_id FROM journal WHERE";
     $subQuery .= " journal.time < " . $cleanTime->epoch . " AND type='DELETED'";
     $subQuery .= " AND history_id NOT IN (SELECT history_id FROM glacier)";
@@ -628,6 +764,20 @@ sub clean_journal {
     }; # try
     
 } # end sub clean_journal
+
+=item C<tbl>
+
+Method outputs data passed in table format
+
+param:
+
+    data array_ref - list of hashes with information
+    
+return:
+
+    void
+    
+=cut
 
 sub tbl {
 
@@ -677,6 +827,20 @@ sub tbl {
 
 } # end sub tbl
 
+=item C<lst>
+
+Method outputs data passed in list format
+
+param:
+
+    data array_ref - list of hashes with information
+    
+return:
+
+    void
+    
+=cut
+
 sub lst {
 
     my $self = shift;
@@ -705,6 +869,21 @@ sub lst {
     print $bkpTbl->draw;
 
 } # end sub lst
+
+=item C<getGlacierBackupsInfo>
+
+Gets glacier and history information for all backups or for specific backup,
+identified by uuid
+
+param:
+
+    uuid string - uuid which identifies file
+    
+return:
+
+    $backupsInfo array_ref - array of hash_refs containing info about backup/s
+    
+=cut
 
 sub getGlacierBackupsInfo {
 
@@ -740,6 +919,20 @@ sub getGlacierBackupsInfo {
 
 } # end sub getRmtBackupsInfo
 
+=item C<getGlacierBackupChain>
+
+Gets backup chain for backup, if it is incremental it gets all backups till full
+
+param:
+
+    uuid string - uuid which identifies file/backup
+    
+return:
+
+    $chain array_ref - list of hash_refs containing info about backups
+    
+=cut
+
 sub getGlacierBackupChain {
 
     my $self            = shift;
@@ -772,23 +965,28 @@ sub getGlacierBackupChain {
 
 } # end sub getGlacierBackupChain
 
-sub prettySize {
+=item C<calcPartSize>
 
-    my $self = shift;
-    my %params = @_;
-    my $size = $params{'size'};
-    my @units = ('b','Kb','Mb','Gb','Tb','Pb','Eb');
-        
-    my $sizeLength = length($size);
-    my $order = int($sizeLength / 3);
-    $order = ($sizeLength % 3) > 0 ? $order : ($order -1);
-    my $convUnit = ($order < 0) ? '' : $units[$order];
+Method accepts size and calculates what should be part size for upload to
+amazon glacier, according AWS documentation maximum can be 4G part and maximun
+number of them per archive 10000, thus max. 4G * 10000 = 40TB file size. We
+are calculating how much percent is passed size from 40TB and then use as percent 
+from maximum part size (4G) to get part size in megabytes (must be multiple of 1024)
+and greater than 1MB (according AWS docs), then we convert this part size in
+MB to bytes (AWS accepts part size in bytes)
 
-    my $converted = $size >> ( $order * 10 );
-        
-    return  $converted . $convUnit;
+param:
+
+    size integer - number of bytes, file size
     
-} # end sub prettySize
+return:
+
+    $ceiledPartSize integer - number of bytes, size which should be used
+                              as size of upload part in multipart glacier upload
+  
+=back
+
+=cut
 
 sub calcPartSize {
 
@@ -807,6 +1005,7 @@ sub calcPartSize {
     my $percent = $fileSize * 100 / $maxSize;
     my $partSize = $percent * $maxPartSize;
     
+    # we use ceil because it must be integer
     my $ceiledPartSize = ceil($partSize) * 1024 * 1024;
     
     return $ceiledPartSize;

@@ -173,6 +173,8 @@ sub restore {
     my $compUtil        = $self->{'compression'};
     my $result          = {};
 
+    File::Path::remove_tree($restoreLocation);
+    
     if ( !-d $restoreLocation ) {
         $self->log('base')->info("Creating restore directory $restoreLocation");
         mkpath($restoreLocation);
@@ -193,13 +195,17 @@ sub restore {
 
     my $decompCmd = $compUtil . " -c -d " . $bkpFile . " | xbstream -x -C " . $restoreLocation;
 
-    $result = $shell->execCmd(
-        'cmd'        => $decompCmd,
-        'cmdsNeeded' => [ $compUtil, 'xbstream' ]
-    );
-
-    $shell->fatal($result);
-
+    try {
+        $result = $shell->execCmd(
+            'cmd'        => $decompCmd,
+            'cmdsNeeded' => [ $compUtil, 'xbstream' ]
+        );
+        $shell->fatal($result);
+    } catch {
+        $self->log->error("Error while executing command, message: ", $result->{'msg'});
+        croak "Error while executing command, message: " . $result->{'msg'};
+    };
+    
     $self->log('base')->info("Applying innodb log and reverting uncommitted transactions to $restoreLocation");
 
     # during restore we need copy tables but also apply log created during backup
@@ -266,11 +272,16 @@ sub rmt_backup {
     $rmtBkpCmd .= " --socket=" . $hostInfo->{'socket'};
     $rmtBkpCmd .= " 2>/dev/null | " . $compUtil . " -c ' > " . $bkpFileName;
 
-    my $result = $shell->execCmd( 'cmd' => $rmtBkpCmd, 'cmdsNeeded' => ['ssh'] );
-
-    $self->log('debug')->debug( "Result of command is: ", $result->{'msg'} );
-
-    $shell->fatal($result);
+    my $result = {};
+    
+    try {
+        $result = $shell->execCmd( 'cmd' => $rmtBkpCmd, 'cmdsNeeded' => ['ssh'] );
+        $self->log('debug')->debug( "Result of command is: ", $result->{'msg'} );
+        $shell->fatal($result);
+    } catch {
+        $self->log->error("Error while executing command, message: ", $result->{'msg'});
+        croak "Error while executing command, message: " . $result->{'msg'};
+    }; # try
 
     # getting information about remote backup from remote host
     my $lastBkpInfoCmd = "ssh -i " . $privKeyPath . " " . $hostInfo->{'ip'} . " '";
@@ -280,9 +291,13 @@ sub rmt_backup {
     $lastBkpInfoCmd .= ' -h ' . $hostInfo->{'local_host'} . ' -X';
     $lastBkpInfoCmd .= ' -S ' . $hostInfo->{'socket'} . "'";
     
-    $result = $shell->execCmd('cmd' => $lastBkpInfoCmd, 'cmdsNeeded' => [ 'ssh' ]);
-
-    $shell->fatal($result);
+    try {
+        $result = $shell->execCmd('cmd' => $lastBkpInfoCmd, 'cmdsNeeded' => [ 'ssh' ]);
+        $shell->fatal($result);
+    } catch {
+        $self->log->error("Error while executing command, message: ", $result->{'msg'});
+        croak "Error while executing command, message: " . $result->{'msg'};
+    }; # try
     
     my $lastBkpInfo = $self->mysqlXmlToHash('xml' => $result->{'msg'});
     $lastBkpInfo = $self->bkpInfoTimeToUTC('bkpInfo' => $lastBkpInfo);
@@ -302,9 +317,15 @@ sub rmt_backup {
     $query .=  "bkpconf_id)";
     $query .= " VALUES(" . join( ",", @escVals ). "," . $hostInfo->{'confId'} . ")";
 
-    my $sth = $self->localDbh->prepare($query);
-    $sth->execute();
-
+    try {
+        my $sth = $self->localDbh->prepare($query);
+        $sth->execute();
+    } catch {
+        my $error = @_ || $_;
+        $self->log->error("Error: ", $error, " Query: " . $query);
+        croak "Error: " . $error;
+    };
+    
     return $lastBkpInfo;
     
 } # end sub rmt_backup

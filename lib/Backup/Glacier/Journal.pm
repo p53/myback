@@ -1,5 +1,25 @@
 package Backup::Glacier::Journal;
 
+=head1 NAME
+
+    Backup::Glacier::Journal - module for logging glacier activity, journal
+                               serves also as source of info for App::MtAws
+                               glacier library, it overrides original App::MtAws
+                               library and implements SQLite as journal not file
+
+=head1 SYNOPSIS
+
+    my $j = Backup::Glacier::Journal->new(
+                                      %journal_opts, 
+                                      'journal_file' => $config->{'journal'}, 
+                                      'root_dir' => $bkpDir
+                                  );
+                                  
+    $j->read_journal(should_exist => 0);
+    $j->read_files($read_journal_opts, $config->{'max-number-of-files'});
+
+=cut
+
 use base qw/App::MtAws::Journal/;
 
 use Carp;
@@ -16,6 +36,54 @@ use Data::Dumper;
 use DBI;
 
 use App::MtAws::Utils;
+
+=head1 METHODS
+
+=over 12
+
+=item C<new>
+
+Constructor overrides original
+
+param:
+
+    %params - as superclass App::MtAws::Journal
+    
+return:
+
+    $self object of type Backup::Glacier::Journal
+
+=cut
+
+sub new {
+
+    my $class = shift;
+    my $self = $class->SUPER::new(@_);
+    
+    $self->{'dbh'} = DBI->connect(
+                    "dbi:SQLite:dbname=" . $self->{'journal_file'},
+                    "", 
+                    "",
+                    {'RaiseError' => 1}
+                );
+                
+    return $self;
+    
+} # end sub new
+
+=item C<read_journal>
+
+Read entries from journal and sort them as archive or job
+
+param:
+
+    %params - as superclass App::MtAws::Journal
+    
+return:
+
+    true boolean
+    
+=cut
 
 sub read_journal {
 
@@ -34,13 +102,6 @@ sub read_journal {
         my @glcBkpsPresent = ();
         my @glcRetrieveJobs = ();
 
-        my $dbh = DBI->connect(
-                    "dbi:SQLite:dbname=" . $self->{'journal_file'},
-                    "", 
-                    "",
-                    {'RaiseError' => 1}
-                );
-
         my $deletedQuery = "SELECT journal.history_id FROM journal";
         $deletedQuery .= " WHERE type='DELETED'";
 
@@ -50,7 +111,7 @@ sub read_journal {
         $query .= " AND type='CREATED' ORDER BY mtime ASC";
 
         try {
-            @glcBkpsPresent = @{ $dbh->selectall_arrayref($query, { Slice => {} }) };
+            @glcBkpsPresent = @{ $self->{'dbh'}->selectall_arrayref($query, { Slice => {} }) };
         } catch {
             confess @_ || $_;
         };
@@ -73,7 +134,7 @@ sub read_journal {
         my $retrieveQuery = "SELECT * FROM journal WHERE type='RETRIEVE_JOB'";
 
         try {
-            @glcRetrieveJobs = @{ $dbh->selectall_arrayref($retrieveQuery, { Slice => {} }) };
+            @glcRetrieveJobs = @{ $self->{'dbh'}->selectall_arrayref($retrieveQuery, { Slice => {} }) };
         } catch {
             confess @_ || $_;
         };
@@ -96,25 +157,37 @@ sub read_journal {
         
 } # end sub read_journal
 
-sub open_for_write {
+=item C<open_for_write>
 
-    my $self = shift;
-    
-    my $dbh = DBI->connect(
-                "dbi:SQLite:dbname=" . $self->{'journal_file'},
-                "", 
-                "",
-                {'RaiseError' => 1}
-            );
-            
-    $self->{'dbh'} = $dbh;
-    
-} # end sub open_for_write
+This method overrides parent and does nothing, as we initialize SQLite connection
+in constructor
 
-sub close_for_write {
-    my $self = shift;  
-    $self->{'dbh'}->disconnect();
-} # end sub close_for_write
+=cut
+
+sub open_for_write {} # end sub open_for_write
+
+=item C<close_for_write>
+
+This method overrides parent and does nothing, as we close SQLite connection
+in destructor
+
+=cut
+
+sub close_for_write {} # end sub close_for_write
+
+=item C<add_entry>
+
+Adds entry to the journal
+
+param:
+
+    %params - as superclass App::MtAws::Journal
+    
+return:
+
+    void
+    
+=cut
 
 sub add_entry {
 
@@ -189,6 +262,23 @@ sub add_entry {
         
 } # end sub add_entry
 
+=item C<hashInsert>
+
+Simple method for inserting information in hash to SQLite, keys are column names
+values are row values
+
+param:
+
+    table string - name of the table to which we want to insert
+    
+    data hash_ref - data we want to insert
+    
+return:
+
+    void
+    
+=cut
+
 sub hashInsert {
 
     my $self = shift;
@@ -208,5 +298,38 @@ sub hashInsert {
     $sth->execute();
         
 } # end sub hashInsert
+
+=item C<DESTROY>
+
+deconstructor method, closes SQLite connections
+
+param:
+
+return:
+
+    void
+    
+=back
+
+=cut
+
+sub DESTROY {
+      my $self = shift;
+      $self->{'dbh'}->disconnect();
+} # end sub DESTROY
+  
+=head1 AUTHOR
+
+    PAVOL IPOTH <pavol.ipoth@gmail.com>
+
+=head1 COPYRIGHT
+
+    Pavol Ipoth, ALL RIGHTS RESERVED, 2015
+
+=head1 License
+
+    GPLv3
+
+=cut
 
 1;

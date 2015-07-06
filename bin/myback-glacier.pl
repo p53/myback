@@ -11,15 +11,15 @@ use Data::Dumper;
 use Log::Log4perl qw(:levels);
 use FindBin;
 use App::MtAws::ConfigEngine;
-use lib "$FindBin::Bin/lib";
+use lib "$FindBin::RealBin/../lib";
 
 use Backup::Glacier;
 
-my $glcConfigPath = "$FindBin::Bin/etc/glacier.cfg";
+my $glcConfigPath = "$FindBin::RealBin/../etc/glacier.cfg";
 
 # configuring our logger, we have two one for debug output
 # and one for normal output, cause they have different formats
-my $log_conf = "$FindBin::Bin/etc/log.conf";
+my $log_conf = "$FindBin::RealBin/../etc/log.conf";
 Log::Log4perl::init($log_conf);
 
 my $dbgLogger = Log::Log4perl->get_logger('debug');
@@ -103,12 +103,14 @@ __END__
 
 =head1 SYNOPSIS
 
-        myback [--help|-h] [--action|-a] action [--dir|-d] path 
+        myback-glacier [--help|-h] [--action|-a] action [--dir|-d] path 
                 [--loc|-l] location_of_mysql_dir [--time|-t] time
                 [--id|-i] id_of_backup [--format|f] output format
 
 =head1 DESCRIPTION
 
+        Utility for uploading and managing backups between host and glacier
+        
 =head1 OPTIONS
 
 =over 8
@@ -148,6 +150,10 @@ __END__
         older than supplied time and are not present in glacier table
         requires: dir, time
         
+    list
+        lists backups, which should be present in glacier
+        requires: dir, format
+        
 =item B<--dir|-d>
 
     This is path to the directory, where backups are present
@@ -173,6 +179,44 @@ __END__
         
 =back
 
+=head1 EXAMPLES
+
+    We have host myhost and backups in /backups folder. Every action with glacier
+    is logged to journal.
+    
+    Command uploads all content of directory /backups to the glacier. It is uploading
+    just in case files are not present already in glacier and their mtime is not
+    different:
+    
+    myback -a sync -d /backups
+    
+    command retrievs, waits for retrieve end (in glacier it takes approx. 4+ hours)
+    and downloads backup with uuid ffaafb60-158e-11e5-a6ea-0ef14e8692d9
+    to directory /glacier/download:
+    
+    myback -a get -d /backups -l /glacier/download -i ffaafb60-158e-11e5-a6ea-0ef14e8692d9
+    
+    command cleans local history of remote backups and remove those backup from
+    filesystem, for entries older than 7200 hours, check clean method for details
+    (it is not so simple):
+    
+    myback -a clean -d /backups -t 7200h
+    
+    command cleans local history of glacier backups and remove those backups
+    from glacier, for entries older than 30 days, please check cleam_rmt for
+    details:
+    
+    myback -a clean_rmt -d /backups -t 30d
+    
+    command cleans journal entries older than 90 days, again it is not so simple,
+    please check clean_journal method description:
+    
+    myback -a clean_journal -d /backups -t 90d
+    
+    command lists backups which should be present now in glacier:
+    
+    myback -a list -d /backups -f tbl
+    
 =head1 AUTHOR
 
     PAVOL IPOTH <pavol.ipoth@gmail.com>
