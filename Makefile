@@ -19,10 +19,12 @@ install:clean
         cp -pR data/* $(DATADIR)/
 	install -pm 0755 bin/$(PACKAGE).pl $(APPBINDIR)/$(PACKAGE)
 	install -pm 0755 bin/$(PACKAGE)-glacier.pl $(APPBINDIR)/$(PACKAGE)-glacier
+	install -pm 0755 bin/$(PACKAGE)-hostcfg.pl $(APPBINDIR)/$(PACKAGE)-hostcfg
         cp -pRl lib/* $(APPLIBDIR)/
         cp -pRl etc/* $(APPCONFDIR)
 	pod2man bin/$(PACKAGE).pl $(MANDIR)/$(PACKAGE).8
 	pod2man bin/$(PACKAGE)-glacier.pl $(MANDIR)/$(PACKAGE)-glacier.8
+	pod2man bin/$(PACKAGE)-hostcfg.pl $(MANDIR)/$(PACKAGE)-hostcfg.8
 
 binary-indep: install
 

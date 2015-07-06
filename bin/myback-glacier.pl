@@ -19,7 +19,7 @@ my $glcConfigPath = "$FindBin::RealBin/../etc/glacier.cfg";
 
 # configuring our logger, we have two one for debug output
 # and one for normal output, cause they have different formats
-my $log_conf = "$FindBin::RealBin/../etc/log.conf";
+my $log_conf = "$FindBin::RealBin/../etc/log-glacier.conf";
 Log::Log4perl::init($log_conf);
 
 my $dbgLogger = Log::Log4perl->get_logger('debug');

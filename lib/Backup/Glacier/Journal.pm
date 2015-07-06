@@ -290,10 +290,9 @@ sub hashInsert {
     my @values = values(%$data);
     my @escVals = map { my $s = $_; $s = $self->{'dbh'}->quote($s); $s } @values;
 
-    $query = "INSERT INTO " . $table . " (" . join( ",", keys(%$data) ) . ")";
+    my $query = "INSERT INTO " . $table . " (" . join( ",", keys(%$data) ) . ")";
     $query .= " VALUES(" . join( ",", @escVals ) . ")";
 
-    print $query;
     my $sth = $self->{'dbh'}->prepare($query);
     $sth->execute();
         
