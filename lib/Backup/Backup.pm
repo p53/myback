@@ -35,7 +35,8 @@ use File::stat;
 
 use Term::Shell;
 
-with 'Backup::BackupInterface', 'MooseX::Log::Log4perl';
+with 'Backup::BackupInterface', 
+     'MooseX::Log::Log4perl';
 
 =head1 METHODS
 

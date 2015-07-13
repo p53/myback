@@ -11,7 +11,6 @@ package Backup::BackupInterface;
 =cut
 
 use Moose::Role;
-use MooseX::ClassAttribute;
 use namespace::autoclean;
 use Moose::Util::TypeConstraints;
 use Carp;
@@ -110,11 +109,7 @@ has 'compressions' => (
 
 =cut
 
-class_has 'localDbh' =>
-        ( is      => 'rw',
-          isa     => 'DBI::db',
-          default => sub { {} },
-        );
+has 'localDbh' => ( is => 'rw' );
         
 =head1 METHODS
 
@@ -162,16 +157,18 @@ sub list_rmt {}
 
 sub BUILD {
 
-    my $class = shift;
+    my $self = shift;
     
     my $dbh = DBI->connect(
-                                "dbi:SQLite:dbname=" . $class->{'bkpDb'},
+                                "dbi:SQLite:dbname=" . $self->{'bkpDb'},
                                 "", 
                                 "",
                                 {'RaiseError' => 1}
                             );
                             
-    $class->localDbh($dbh);
+    $self->localDbh($dbh);
+    
+    return $self;
     
 } # end sub BUILD
 

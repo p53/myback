@@ -1,7 +1,6 @@
 package Backup::Db::DbInterface;
 
 use Moose::Role;
-use MooseX::ClassAttribute;
 use namespace::autoclean;
 use Moose::Util::TypeConstraints;
 use Carp;
@@ -17,6 +16,10 @@ use DateTime;
 use Data::Dumper;
 use DBI;
 
+=head1 PUBLIC PROPERTIES
+
+=over 12
+
 =item bkpDb string
 
     stores default path to sqlite database, used for storing
@@ -29,11 +32,7 @@ has 'bkpDb' => (
     default => '/var/lib/myback/bkpdb'
 );
 
-=head1 PUBLIC STATIC PROPERTIES
-
-=over 12
-
-=item DBI::db
+=item localDbh DBI::db
 
     stores database handler object
 
@@ -41,24 +40,22 @@ has 'bkpDb' => (
 
 =cut
 
-class_has 'localDbh' =>
-        ( is      => 'rw',
-          isa     => 'DBI::db',
-          default => sub { {} },
-        );
+has 'localDbh' => ( is => 'rw' );
         
 sub BUILD {
 
-    my $class = shift;
+    my $self = shift;
     
     my $dbh = DBI->connect(
-                                "dbi:SQLite:dbname=" . $class->{'bkpDb'},
+                                "dbi:SQLite:dbname=" . $self->{'bkpDb'},
                                 "", 
                                 "",
                                 {'RaiseError' => 1}
                             );
                             
-    $class->localDbh($dbh);
+    $self->localDbh($dbh);
+    
+    return $self;
     
 } # end sub BUILD
 

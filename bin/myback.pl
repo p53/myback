@@ -85,7 +85,7 @@ pod2usage(1) if !$action;
 
 pod2usage(-verbose => 3) if !defined( $allowedActions->{$action} );
 
-pod2usage(1) if ( $action eq 'restore' && !($dir && $host && $id && $location) );
+pod2usage(1) if ( $action eq 'restore' && !($dir && $host && $id && $location && $user && $pass) );
 pod2usage(1) if ( $action eq 'list' && !($host && $format && $user && $pass) );
 pod2usage(1) if ( $action eq 'list' && !defined( $allowedFormats->{$format} ) );
 
@@ -167,7 +167,7 @@ __END__
         
     restore
         creates local restore to the directory loc
-        requires: dir, host, id, location
+        requires: dir, host, id, location, user, pass
         
     list
         lists backups on host

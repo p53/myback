@@ -44,7 +44,8 @@ use App::MtAws;
 use Term::Shell;
 use Backup::Glacier::Journal;
 
-with 'Backup::BackupInterface', 'MooseX::Log::Log4perl';
+with 'Backup::BackupInterface',
+     'MooseX::Log::Log4perl';
 
 =head1 METHODS
 
