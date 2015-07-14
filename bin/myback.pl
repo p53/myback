@@ -41,6 +41,7 @@ my $type = '';
 my $id = '';
 my $format = '';
 my $socket = '';
+my $optimize = '';
 
 my $allowedTypes = {
                         'incremental' => 1,
@@ -62,6 +63,11 @@ my $allowedFormats = {
                         'lst' => 1
                     };
 
+my $allowOptimize = {
+                        'yes' => 1,
+                        'no' => 1
+                    };
+
 pod2usage(-verbose => 3) unless @ARGV;
 
 GetOptions(
@@ -77,6 +83,7 @@ GetOptions(
                 'config|c:s' => \$config,
                 'format|f:s' => \$format,
                 'socket|o:s' => \$socket,
+                'optimize|z:s' => \$optimize,
                 'help!' => \$help
         ) or pod2usage(-verbose => 3);
 
@@ -90,8 +97,9 @@ pod2usage(1) if ( $action eq 'list' && !($host && $format && $user && $pass) );
 pod2usage(1) if ( $action eq 'list' && !defined( $allowedFormats->{$format} ) );
 
 pod2usage(1) if ( $action eq 'backup' && !defined( $allowedTypes->{$type} ) );
+pod2usage(1) if ( $action eq 'backup' && !defined( $allowOptimize->{$optimize} ) );
 
-if( $action eq 'backup' && !($dir && $type && $host && $user && $pass) ) {
+if( $action eq 'backup' && !($dir && $type && $host && $user && $pass && $optimize) ) {
     pod2usage(1);
 } # if
 
@@ -99,7 +107,8 @@ if( $action eq 'dump' && !($dir && $location && $dbname && $host) ) {
     pod2usage(1);
 } # if
 
-pod2usage(1) if ( $action eq 'rmt_backup' && !($dir && $host && $type) );
+pod2usage(1) if ( $action eq 'rmt_backup' && !defined( $allowOptimize->{$optimize} ) );
+pod2usage(1) if ( $action eq 'rmt_backup' && !($dir && $host && $type && $optimize) );
 pod2usage(1) if ( $action eq 'list_rmt' && !($format) );
 pod2usage(1) if ( $action eq 'restore_rmt' && !($dir && $host && $id && $location) );
 pod2usage(1) if ( $action eq 'dump_rmt' && !($dir && $host && $id && $location && $dbname) );
@@ -117,7 +126,8 @@ my %params = (
     "uuid" => $id,
     "hostBkpDir" => $hostBkpDir,
     "format" => $format,
-    "socket" => $socket
+    "socket" => $socket,
+    "optimize" => $optimize
 );
 
 $dbgLogger->debug("Dumping parameters: ", sub { Dumper(\%params) } );
@@ -163,7 +173,7 @@ __END__
     backup
         creates local backup to the directory dir
         requires: dir, user, password, backup_type, name of database host
-        optional: socket
+        optional: socket, optimize
         
     restore
         creates local restore to the directory loc
@@ -178,7 +188,7 @@ __END__
         initiates backup on remote host, backups remote host and transfer
         backup on server to directory dir, insert info about backup to server database
         requires: dir, host - host is alias for the remote host
-        (there can be several db ports on one host...), type
+        (there can be several db ports on one host...), type, optimize
         
     list_rmt
         lists backups from remote hosts, which where transfered to the server
@@ -240,7 +250,16 @@ __END__
 =item B<--socket|-o>
 
     database socket
-        
+      
+=item B<--optimize|-z>
+
+    this is used to determine if mysql optimize should be run before backup
+    NOTE: if you use incremental option value with optimize you will see probably
+    same size of incremental backup as full backup, this is because mysql innodb tables
+    are recreated and thus considered changed
+    
+=cut
+
 =back
 
 =head1 EXAMPLES
@@ -252,16 +271,16 @@ __END__
     , password is backup, type of backup is full. Mysql database host is localhost,
     if mysql would be listinening on host1 IP, than there would be host1:
     
-    myback -a backup -d /backups -u backup -p backup -b full -h localhost
+    myback -a backup -d /backups -u backup -p backup -b full -h localhost -z yes
     
     same, but incremental backups and we can specify socket if it is different
     than standard:
     
-    myback -a backup -d /backups -u backup -p backup -b incremental -h localhost -o /var/run/mysqld/mysqldCUSTOM.sock
+    myback -a backup -d /backups -u backup -p backup -b incremental -h localhost -o /var/run/mysqld/mysqldCUSTOM.sock -z no
     
     command restores local mysql backup with uuid 06ad4560-007e-11e5-973c-005056850000
     and for database host localhost to directory /restore (WARNING: it first
-    removes /restore dir, it creates it again and then restores)
+    removes /restore dir, it creates it again and then restores):
     
     myback -a restore -d /backups -h localhost -i 06ad4560-007e-11e5-973c-005056850000 -l /restore
     

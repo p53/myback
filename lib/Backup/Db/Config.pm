@@ -1,5 +1,27 @@
 package Backup::Db::Config;
 
+=head1 NAME
+
+    Backup::Db::Config - module for maintaing host configurations for backup
+
+=head1 SYNOPSIS
+
+    my $backupCfgObj = Backup::Db::Config->new();
+    
+    $backupCfgObj->add(     
+                            'host' => 'host1',
+                            'ip' => '192.168.5.25',
+                            'privKey' => '/home/.ssh/backup_priv_key',
+                            'user' => 'backup',
+                            'pass' => 'simple',
+                            'alias' => 'host1',
+                            'localHost' => 'localhost',
+                            'localDir' => '/tmp',
+                            'socket' => '/var/run/mysqld/mysqld.sock'
+                        );
+
+=cut
+
 use Moose;
 use namespace::autoclean;
 use Carp;
@@ -17,6 +39,33 @@ use File::stat;
 use YAML::Tiny;
 
 with 'Backup::Db::DbInterface', 'MooseX::Log::Log4perl';
+
+=head1 METHODS
+
+=over 12
+
+=item C<add>
+
+method adds record to the host configuration database, if host is already
+present but alias not it will add it
+
+param:
+
+    host string - name of host
+    ip string - IP address of host
+    privKey string - path to the private key file
+    user string - mysql database user
+    pass string - mysql database password
+    alias string - alias for host configuration
+    localHost string - local name of database host
+    localDir string - local directory of added host
+    socket string - socket path of database host
+    
+return:
+
+    void
+
+=cut
 
 sub add {
 
@@ -50,7 +99,7 @@ sub add {
         my $error = @_ || $_;
         $self->log->error("Error: ", $error, " Query: " . $aliasCheckQuery);
         croak "Error: " . $error;
-    };
+    }; # try
     
     my @checkResult = ();
     
@@ -85,13 +134,13 @@ sub add {
         my $error = @_ || $_;
         $self->log->error("Error: ", $error, " Query: " . $hostCheckQuery);
         croak "Error: " . $error;
-    };
+    }; # try
     
     my @hostCheckResult = ();
     
     while( my $row = $sth->fetchrow_hashref() ) {
         push(@hostCheckResult, $row);
-    }
+    } # while
     
     $self->log('debug')->debug("Dumping result: ", sub { Dumper(\@hostCheckResult) } );
     
@@ -130,7 +179,7 @@ sub add {
             my $error = @_ || $_;
             $self->log->error("Error: ", $error);
             croak "Error: " . $error;
-        };
+        }; # try
         
     } else {
         
@@ -149,7 +198,7 @@ sub add {
             my $error = @_ || $_;
             $self->log->error("Error: ", $error);
             croak "Error: " . $error;
-        };
+        }; # try
         
         my $id = $dbh->last_insert_id("", "", "host", "");
         
@@ -174,11 +223,26 @@ sub add {
             my $error = @_ || $_;
             $self->log->error("Error: ", $error);
             croak "Error: " . $error;
-        };
+        }; # try
     
     } # if
     
 } # end sub add
+
+=item C<delete>
+
+Method deletes host configuration for host or just alias configuration for host
+
+param:
+
+    host string - name of host
+    alias string - alias for host
+    
+return:
+
+    void
+    
+=cut
 
 sub delete {
 
@@ -245,6 +309,18 @@ sub delete {
     
 } # end sub delete
 
+=item C<list>
+
+Method returns list of all alias configurations as YAML
+
+param:
+
+return:
+
+    $yamlStr string - list of all alias configurations
+    
+=cut
+
 sub list {
 
     my $self = shift;
@@ -277,5 +353,19 @@ sub list {
 } # end sub list
 
 no Moose::Role;
+
+=head1 AUTHOR
+
+    PAVOL IPOTH <pavol.ipoth@gmail.com>
+
+=head1 COPYRIGHT
+
+    Pavol Ipoth, ALL RIGHTS RESERVED, 2015
+
+=head1 License
+
+    GPLv3
+
+=cut
 
 1;

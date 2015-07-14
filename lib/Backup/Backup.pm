@@ -71,6 +71,29 @@ sub backup {
         croak "You need to specify type!";
     } # if
 
+    my $optiCmd = $self->getOptimizeCmd(%params);
+    
+    my $shell = Term::Shell->new();
+    my $result = '';
+    
+    if( $params{'optimize'} eq 'yes' ) {
+    
+        $self->log('base')->info("Optimizing databases");
+        
+        try {
+            $result = $shell->execCmd(
+                'cmd'        => $optiCmd,
+                'cmdsNeeded' => [ 'mysqlcheck' ]
+            );
+            $shell->fatal($result);
+        }
+        catch {
+            $self->log->error( "Shell command failed! Message: ", $result->{'msg'} );
+            croak "Shell command failed! Message: " . $result->{'msg'};
+        }; # try
+        
+    } # if
+    
     $self->{'bkpType'} = $self->getType(%params);
 
     $self->{'bkpType'}->backup(%params);
@@ -109,6 +132,8 @@ sub rmt_backup {
     my $lastBkpInfo = {};
     my $compSuffix = $self->{'compressions'}->{$self->{'compression'}};
     my $compUtil = $self->{'compression'};
+    my $shell = Term::Shell->new();
+    my $result = '';
     
     $self->log('base')->info("Starting remote backup");
 
@@ -151,7 +176,7 @@ sub rmt_backup {
         $self->log->error("You need to specify user, pass for remote host!");
         croak "You need to specify user, pass for remote host!";
     } # if
-
+    
     my $dateTime = DateTime->now();
     my $now = $dateTime->ymd('-') . 'T' . $dateTime->hms('-');
     my $aliasBkpDir = $params{'bkpDir'} . '/' . $hostInfo->{'alias'} . '/' . $now;
@@ -167,9 +192,25 @@ sub rmt_backup {
 
     chmod 0600, $privKeyPath;
 
-    my $shell = Term::Shell->new();
-    my $result = '';
+    if( $params{'optimize'} eq 'yes' ) {
+    
+        $self->log('base')->info("Optimizing databases");
 
+        my $optiCmd = $self->getOptimizeCmd(%$hostInfo);
+        my $remoteOptiCmd = "ssh -i " . $privKeyPath . " " . $hostInfo->{'ip'} . " '";
+        $remoteOptiCmd .= $optiCmd . "'";
+
+        try {
+            $result = $shell->execCmd( 'cmd' => $remoteOptiCmd, 'cmdsNeeded' => ['ssh', 'mysqlcheck'] );
+            $self->log('debug')->debug( "Result of command is: ", $result->{'msg'} );
+            $shell->fatal($result);
+        } catch {
+            $self->log->error("Error while executing command, message: ", $result->{'msg'});
+            croak "Error while executing command, message: " . $result->{'msg'};
+        }; # try
+
+    } # if
+     
     $lastBkpInfo = $self->{'bkpType'}->rmt_backup(
                                     'hostInfo' => $hostInfo, 
                                     'privKeyPath' => $privKeyPath,
@@ -877,6 +918,21 @@ sub lst_rmt {
     $self->lst(%params);
 
 } # end sub lst
+
+sub getOptimizeCmd {
+
+    my $self = shift;
+    my %params = @_;
+    my $user = $params{'user'};
+    my $pass = $params{'pass'};
+    my $socket = $params{'socket'};
+    
+    my $cmd = "mysqlcheck -u " . $user . " -p\Q${pass}\E" . " -S " . $socket;
+    $cmd .= " --optimize --all-databases";
+
+    return $cmd;
+    
+} # end sub getOptimizeCmd
 
 no Moose::Role;
 
