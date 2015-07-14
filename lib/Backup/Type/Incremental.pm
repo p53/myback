@@ -418,7 +418,7 @@ sub rmt_backup {
     $rmtBkpCmd .= " --incremental-history-uuid=" . $hostInfo->{'uuid'};
     $rmtBkpCmd .= " --socket=" . $hostInfo->{'socket'};
     $rmtBkpCmd .= " " . $hostInfo->{'local_dir'};
-    $rmtBkpCmd .= " 2>/dev/null | " . $compUtil . " -c ' > " . $bkpFileName;
+    $rmtBkpCmd .= " 2>/var/log/myback-client.log | " . $compUtil . " -c ' > " . $bkpFileName;
     
     $result = $shell->execCmd('cmd' => $rmtBkpCmd, 'cmdsNeeded' => [ 'ssh' ]);
 

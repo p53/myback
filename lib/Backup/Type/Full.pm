@@ -271,7 +271,7 @@ sub rmt_backup {
     $rmtBkpCmd .= " --history --stream=xbstream --host=" . $hostInfo->{'local_host'};
     $rmtBkpCmd .= " --password=\Q$hostInfo->{'pass'}\E " . $hostInfo->{'local_dir'};
     $rmtBkpCmd .= " --socket=" . $hostInfo->{'socket'};
-    $rmtBkpCmd .= " 2>/dev/null | " . $compUtil . " -c ' > " . $bkpFileName;
+    $rmtBkpCmd .= " 2>/var/log/myback-client.log | " . $compUtil . " -c ' > " . $bkpFileName;
 
     my $result = {};
     
