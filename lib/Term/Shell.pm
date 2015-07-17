@@ -59,7 +59,7 @@ sub execCmd {
     my $cmdsNeeded = $params{'cmdsNeeded'};
 
     if ( !$params{'cmd'} ) {
-        $self->log->error("You must supply cmd!");
+        $self->log('base')->error("You must supply cmd!");
         die "You must supply cmd!";
     }    # if
 
@@ -112,7 +112,7 @@ sub exec {
     my $cmd    = $params{'cmd'};
 
     if ( !$params{'cmd'} ) {
-        $self->log->error("You must supply cmd!");
+        $self->log('base')->error("You must supply cmd!");
         die "You must supply cmd!";
     }    # if
 
@@ -301,7 +301,7 @@ sub fatal {
     my $class  = ref $self;
 
     if ( $result->{'returnCode'} != 0 ) {
-        $self->log->error( "ERROR: $class " . $result->{'msg'} );
+        $self->log('base')->error( "ERROR: $class " . $result->{'msg'} );
         die "DIED: $class " . $result->{'msg'};
     }    # if
 

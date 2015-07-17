@@ -141,7 +141,7 @@ sub sync {
         
     } catch {
         my $error = @_ || $_;
-        $self->log->error("There was some problem: ", $error);
+        $self->log('base')->error("There was some problem: ", $error);
         croak $error;
         exit(1);
     };
@@ -229,7 +229,7 @@ sub clean {
     my $timeNum = $1;
     
     if( ! exists($units->{$unit}) ) {
-        $self->log->error("Bad time unit: ", $unit);
+        $self->log('base')->error("Bad time unit: ", $unit);
         croak "Bad time unit!";
     } # if
     
@@ -261,7 +261,7 @@ sub clean {
         @localBackups = @{ $self->localDbh->selectall_arrayref($query, { Slice => {} }) };
     } catch {
         my $error = @_ || $_;
-        $self->log->error("Error: ", $error, " Query: " . $query);
+        $self->log('base')->error("Error: ", $error, " Query: " . $query);
         croak "Error: " . $error;
     };
     
@@ -301,7 +301,7 @@ sub clean {
             @countRecs = @{ $self->localDbh->selectall_arrayref($glcQuery, { Slice => {} }) };
         } catch {
             my $error = @_ || $_;
-            $self->log->error("Error: ", $error, " Query: " . $glcQuery);
+            $self->log('base')->error("Error: ", $error, " Query: " . $glcQuery);
             croak "Error: " . $error;
         };
         
@@ -325,7 +325,7 @@ sub clean {
                 $sth->execute();
             } catch {
                 my $error = @_ || $_;
-                $self->log->error("Error: ", $error, " Query: " . $delQuery);
+                $self->log('base')->error("Error: ", $error, " Query: " . $delQuery);
                 croak "Error: " . $error;
             }; # try
             
@@ -340,7 +340,7 @@ sub clean {
                 $sth->execute();
             } catch {
                 my $error = @_ || $_;
-                $self->log->error("Error: ", $error, " Query: " . $delQuery);
+                $self->log('base')->error("Error: ", $error, " Query: " . $delQuery);
                 croak "Error: " . $error;
             }; # try
             
@@ -394,7 +394,7 @@ sub clean_rmt {
     my $timeNum = $1;
     
     if( ! exists($units->{$unit}) ) {
-        $self->log->error("Bad time unit: ", $unit);
+        $self->log('base')->error("Bad time unit: ", $unit);
         croak "Bad time unit!";
     } # if
     
@@ -428,7 +428,7 @@ sub clean_rmt {
         @glcBackups = @{ $self->localDbh->selectall_arrayref($glcQuery, { Slice => {} }) };
     } catch {
         my $error = @_ || $_;
-        $self->log->error("Error: ", $error, " Query: " . $glcQuery);
+        $self->log('base')->error("Error: ", $error, " Query: " . $glcQuery);
         croak "Error: " . $error;
     };
     
@@ -470,7 +470,7 @@ sub clean_rmt {
             });
         } catch {
             my $error = @_ || $_;
-            $self->log->error("Error: ", $error);
+            $self->log('base')->error("Error: ", $error);
             croak "Error: " . $error;
         };
         
@@ -484,7 +484,7 @@ sub clean_rmt {
             $sth->execute();
         } catch {
             my $error = @_ || $_;
-            $self->log->error("Error: ", $error, " Query: " . $deleteQuery);
+            $self->log('base')->error("Error: ", $error, " Query: " . $deleteQuery);
             croak "Error: " . $error;
         }; # try
         
@@ -541,7 +541,7 @@ sub get {
     $self->log('debug')->debug("Dumping backup info: ", sub { Dumper($backups) });
     
     if( scalar(@$backups) > 1 ) {
-        $self->log->error("Found more than one entry for uuid in glacier history: ", $uuid);
+        $self->log('base')->error("Found more than one entry for uuid in glacier history: ", $uuid);
         croak "Found more than one entry for uuid in glacier history: " . $uuid;
     } # if
     
@@ -601,7 +601,7 @@ sub get {
         });
     } catch {
         my $error = @_ || $_;
-        $self->log->error("Error: ", $error);
+        $self->log('base')->error("Error: ", $error);
         croak "Error: " . $error;
     };
     
@@ -631,7 +631,7 @@ sub get {
             });
         } catch {
             my $error = @_ || $_;
-            $self->log->error("Error: ", $error);
+            $self->log('base')->error("Error: ", $error);
             croak "Error: " . $error;
         };
         
@@ -664,8 +664,8 @@ sub get {
             next;
         } # if
         
-        $self->log->error("Timeout for download " . $downloadTimeout . " expired!");
-        $self->log->error("Not able to download these: ", sub{ Dumper($unpresent)});
+        $self->log('base')->error("Timeout for download " . $downloadTimeout . " expired!");
+        $self->log('base')->error("Not able to download these: ", sub{ Dumper($unpresent)});
         croak "Timeout for download " . $downloadTimeout . " expired!";
         
     } # while
@@ -708,7 +708,7 @@ sub clean_journal {
     my $timeNum = $1;
     
     if( ! exists($units->{$unit}) ) {
-        $self->log->error("Bad time unit: ", $unit);
+        $self->log('base')->error("Bad time unit: ", $unit);
         croak "Bad time unit!";
     } # if
     
@@ -743,7 +743,7 @@ sub clean_journal {
         @deletedEntries = @{ $self->localDbh->selectall_arrayref($query, { Slice => {} }) };
     } catch {
         my $error = @_ || $_;
-        $self->log->error("Error: ", $error, " Query: " . $query);
+        $self->log('base')->error("Error: ", $error, " Query: " . $query);
         croak "Error: " . $error;
     };
     
@@ -760,7 +760,7 @@ sub clean_journal {
         $sth->execute();
     } catch {
         my $error = @_ || $_;
-        $self->log->error("Error: ", $error, " Query: " . $query);
+        $self->log('base')->error("Error: ", $error, " Query: " . $query);
         croak "Error: " . $error;
     }; # try
     
@@ -912,7 +912,7 @@ sub getGlacierBackupsInfo {
         @backupsInfo = @{ $self->localDbh->selectall_arrayref($getQuery, { Slice => {} }) };
     } catch {
         my $error = @_ || $_;
-        $self->log->error("Error: ", $error, " Query: " . $getQuery);
+        $self->log('base')->error("Error: ", $error, " Query: " . $getQuery);
         croak "Error: " . $error;
     }; # try
     
@@ -956,7 +956,7 @@ sub getGlacierBackupChain {
         @chain = @{ $self->localDbh->selectall_arrayref($query, { Slice => {} }) };
     } catch {
         my $error = @_ || $_;
-        $self->log->error("Error: ", $error, " Query: " . $query);
+        $self->log('base')->error("Error: ", $error, " Query: " . $query);
         croak "Error: " . $error;
     };
     
@@ -999,7 +999,7 @@ sub calcPartSize {
     my $maxPartSize = 4 * 1024;
     
     if( $fileSize > $maxSize ) {
-        $self->log->error("File size is bigger than max size: ", $maxSize);
+        $self->log('base')->error("File size is bigger than max size: ", $maxSize);
         croak "File size is bigger than max size: " . $maxSize;
     } # if
     

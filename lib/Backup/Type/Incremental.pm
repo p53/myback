@@ -69,12 +69,12 @@ sub backup {
     
     # checking if all needed parameters present
     if( !( defined $params{'user'} && defined $params{'pass'} ) ) {
-        $self->log->error("You need to specify user, pass!");
+        $self->log('base')->error("You need to specify user, pass!");
         croak "You need to specify user, pass!";
     } # if
 
     if( ! -d $params{'hostBkpDir'} ) {
-        $self->log->error("$params{'hostBkpDir'} does not exist, incremental backup needs previous backup!");
+        $self->log('base')->error("$params{'hostBkpDir'} does not exist, incremental backup needs previous backup!");
         croak "$params{'hostBkpDir'} does not exist, incremental backup needs previous backup!";
     } # if
 
@@ -121,7 +121,7 @@ sub backup {
         $shell->fatal($result);
     } catch {
         File::Path::remove_tree($bkpDir . "/" . $now);
-        $self->log->error("Shell command failed! Message: ", $result->{'msg'});
+        $self->log('base')->error("Shell command failed! Message: ", $result->{'msg'});
         croak "Shell command failed! Message: " . $result->{'msg'};
     }; # try
     
@@ -239,7 +239,7 @@ sub restore_common {
     my $bkpFile = $files[0];
 
     if( ! -f $bkpFile ) {
-        $self->log->error("Cannot find file with uuid " . $fullBkp->{'uuid'} . "!");
+        $self->log('base')->error("Cannot find file with uuid " . $fullBkp->{'uuid'} . "!");
         croak "Cannot find file with uuid " . $fullBkp->{'uuid'} . "!";
     } # if
     
@@ -253,7 +253,7 @@ sub restore_common {
         $result = $shell->execCmd('cmd' => $decompCmd, 'cmdsNeeded' => [ $compUtil, 'xbstream' ]);
         $shell->fatal($result);
     } catch {
-        $self->log->error("Error while executing command, message: ", $result->{'msg'});
+        $self->log('base')->error("Error while executing command, message: ", $result->{'msg'});
         croak "Error while executing command, message: " . $result->{'msg'};
     }; # try
     
@@ -266,7 +266,7 @@ sub restore_common {
         $result = $shell->execCmd('cmd' => $restoreFullCmd, 'cmdsNeeded' => [ 'innobackupex' ]);
         $shell->fatal($result);
     } catch {
-        $self->log->error("Error: ", $result->{'msg'});
+        $self->log('base')->error("Error: ", $result->{'msg'});
         File::Path::remove_tree($restoreLocation);
     }; # try
 
@@ -281,7 +281,7 @@ sub restore_common {
         my $bkpFile = $files[0];
         
         if( ! -f $bkpFile ) {
-            $self->log->error("Cannot find file with uuid " . $prevBkp->{'uuid'} . "!");
+            $self->log('base')->error("Cannot find file with uuid " . $prevBkp->{'uuid'} . "!");
             croak "Cannot find file with uuid " . $prevBkp->{'uuid'} . "!";
         } # if
         
@@ -293,7 +293,7 @@ sub restore_common {
             $result = $shell->execCmd('cmd' => $decompCmd, 'cmdsNeeded' => [ $compUtil, 'xbstream' ]);
             $shell->fatal($result);
         } catch {
-            $self->log->error("Error while executing command, message: ", $result->{'msg'});
+            $self->log('base')->error("Error while executing command, message: ", $result->{'msg'});
             croak "Error while executing command, message: " . $result->{'msg'};
         }; # try
     
@@ -305,7 +305,7 @@ sub restore_common {
             $result = $shell->execCmd('cmd' => $restoreIncrCmd, 'cmdsNeeded' => [ 'innobackupex' ]);
             $shell->fatal($result);
         } catch {
-            $self->log->error("Error: ", $result->{'msg'});
+            $self->log('base')->error("Error: ", $result->{'msg'});
             File::Path::remove_tree($restoreLocation);
         }; # try
 
@@ -320,7 +320,7 @@ sub restore_common {
     $bkpFile = $files[0];
     
     if( ! -f $bkpFile ) {
-        $self->log->error("Cannot find file with uuid " . $currentBkp->{'uuid'} . "!");
+        $self->log('base')->error("Cannot find file with uuid " . $currentBkp->{'uuid'} . "!");
         croak "Cannot find file with uuid " . $currentBkp->{'uuid'} . "!";
     } # if
         
@@ -334,7 +334,7 @@ sub restore_common {
         $result = $shell->execCmd('cmd' => $decompCmd, 'cmdsNeeded' => [ $compUtil, 'xbstream' ]);
         $shell->fatal($result);
     } catch {
-        $self->log->error("Error while executing command, message: ", $result->{'msg'});
+        $self->log('base')->error("Error while executing command, message: ", $result->{'msg'});
         croak "Error while executing command, message: " . $result->{'msg'};
     }; # try
     
@@ -344,7 +344,7 @@ sub restore_common {
         $result = $shell->execCmd('cmd' => $lastIncrCmd, 'cmdsNeeded' => [ 'innobackupex' ]);
         $shell->fatal($result);
     } catch {
-        $self->log->error("Error: ", $result->{'msg'});
+        $self->log('base')->error("Error: ", $result->{'msg'});
         File::Path::remove_tree($restoreLocation);
     }; # try
 
@@ -354,7 +354,7 @@ sub restore_common {
         $result = $shell->execCmd('cmd' => $restoreFullRollbackCmd, 'cmdsNeeded' => [ 'innobackupex' ]);
         $shell->fatal($result);
     } catch {
-        $self->log->error("Error: ", $result->{'msg'});
+        $self->log('base')->error("Error: ", $result->{'msg'});
         File::Path::remove_tree($restoreLocation);
     }; # try
 
@@ -438,7 +438,7 @@ sub rmt_backup {
         $result = $shell->execCmd('cmd' => $lastBkpInfoCmd, 'cmdsNeeded' => [ 'ssh' ]);
         $shell->fatal($result);
     } catch {
-        $self->log->error("Error while executing command, message: ", $result->{'msg'});
+        $self->log('base')->error("Error while executing command, message: ", $result->{'msg'});
         croak "Error while executing command, message: " . $result->{'msg'};
     }; # try
     
@@ -466,7 +466,7 @@ sub rmt_backup {
         $sth->execute();
     } catch {
         my $error = @_ || $_;
-        $self->log->error("Error: ", $error, " Query: " . $query);
+        $self->log('base')->error("Error: ", $error, " Query: " . $query);
         croak "Error: " . $error;
     }; # try
     
@@ -546,7 +546,7 @@ sub getBackupChain {
         @chain = @{ $self->localDbh->selectall_arrayref($query, { Slice => {} }) };
     } catch {
         my $error = @_ || $_;
-        $self->log->error("Error: ", $error, " Query: " . $query);
+        $self->log('base')->error("Error: ", $error, " Query: " . $query);
         croak "Error: " . $error;
     };
     

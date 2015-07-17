@@ -310,17 +310,17 @@ sub rmt_tmp_backup {
     @hostsInfo = @{ $self->localDbh->selectall_arrayref($query, { Slice => {} }) };
 
     if( scalar(@hostsInfo) == 0 ) {
-        $self->log->error("No such host!");
+        $self->log('base')->error("No such host!");
         croak "No such host!";
     } elsif( scalar(@hostsInfo) > 1 ) {
-        $self->log->error("Found more than one alias with that name, check your DB!");
+        $self->log('base')->error("Found more than one alias with that name, check your DB!");
         croak "Found more than one alias with that name, check your DB!";
     } # if
 
     $hostInfo = $hostsInfo[0];
 
     if( !( defined $hostInfo->{'user'} && defined $hostInfo->{'pass'} ) ) {
-        $self->log->error("You need to specify user, pass for remote host!");
+        $self->log('base')->error("You need to specify user, pass for remote host!");
         croak "You need to specify user, pass for remote host!";
     } # if
 
@@ -393,7 +393,7 @@ sub rmt_tmp_backup {
         my $dateDir = $2;
 
         if( !defined $remoteDir || !defined $dateDir) {
-            $self->log->error("You don't define remote host directory and date directory!");
+            $self->log('base')->error("You don't define remote host directory and date directory!");
             croak "You don't define remote host directory and date directory!";
         } # if
 

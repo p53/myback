@@ -1,0 +1,9 @@
+/var/log/myback*.log {
+        daily
+        rotate 14
+        copytruncate
+        compress
+        delaycompress
+        missingok
+        notifempty
+}

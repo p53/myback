@@ -67,7 +67,7 @@ sub backup {
     $self->log('base')->info("Starting local backup");
 
     if( !( defined $params{'bkpType'} ) ) {
-        $self->log->error("You need to specify type!");
+        $self->log('base')->error("You need to specify type!");
         croak "You need to specify type!";
     } # if
 
@@ -88,7 +88,7 @@ sub backup {
             $shell->fatal($result);
         }
         catch {
-            $self->log->error( "Shell command failed! Message: ", $result->{'msg'} );
+            $self->log('base')->error( "Shell command failed! Message: ", $result->{'msg'} );
             croak "Shell command failed! Message: " . $result->{'msg'};
         }; # try
         
@@ -138,7 +138,7 @@ sub rmt_backup {
     $self->log('base')->info("Starting remote backup");
 
     if( !( defined $params{'user'} && defined $params{'pass'} ) ) {
-        $self->log->error("You need to specify user, pass!");
+        $self->log('base')->error("You need to specify user, pass!");
         croak "You need to specify type, user, pass!";
     } # if
 
@@ -158,22 +158,22 @@ sub rmt_backup {
         @hostsInfo = @{ $self->localDbh->selectall_arrayref($query, { Slice => {} }) };
     } catch {
         my $error = @_ || $_;
-        $self->log->error("Error: ", $error, " Query: " . $query);
+        $self->log('base')->error("Error: ", $error, " Query: " . $query);
         croak "Error: " . $error;
     };
     
     if( scalar(@hostsInfo) == 0 ) {
-        $self->log->error("No such host!");
+        $self->log('base')->error("No such host!");
         croak "No such host!";
     } elsif( scalar(@hostsInfo) > 1 ) {
-        $self->log->error("Found more than one alias with that name, check your DB!");
+        $self->log('base')->error("Found more than one alias with that name, check your DB!");
         croak "Found more than one alias with that name, check your DB!";
     } # if
 
     $hostInfo = $hostsInfo[0];
 
     if( !( defined $hostInfo->{'user'} && defined $hostInfo->{'pass'} ) ) {
-        $self->log->error("You need to specify user, pass for remote host!");
+        $self->log('base')->error("You need to specify user, pass for remote host!");
         croak "You need to specify user, pass for remote host!";
     } # if
     
@@ -205,7 +205,7 @@ sub rmt_backup {
             $self->log('debug')->debug( "Result of command is: ", $result->{'msg'} );
             $shell->fatal($result);
         } catch {
-            $self->log->error("Error while executing command, message: ", $result->{'msg'});
+            $self->log('base')->error("Error while executing command, message: ", $result->{'msg'});
             croak "Error while executing command, message: " . $result->{'msg'};
         }; # try
 
@@ -275,7 +275,7 @@ sub restore {
     } # for
 
     if( !defined( $backupsInfo->{$uuid} ) ) {
-        $self->log->error("No backups with uuid $uuid!");
+        $self->log('base')->error("No backups with uuid $uuid!");
         croak "No backups with uuid $uuid!";
     } # if
 
@@ -323,7 +323,7 @@ sub restore_rmt {
     $self->log('debug')->debug("Dumping backups info", , sub { Dumper($backups) });
 
     if( scalar(@$backups) == 0 ) {
-        $self->log->error("No backups with uuid $uuid!");
+        $self->log('base')->error("No backups with uuid $uuid!");
         croak "No backups with uuid $uuid!";
     } # if
 
@@ -400,7 +400,7 @@ sub dump_rmt {
             $result = $shell->execCmd('cmd' => $stopDb, 'cmdsNeeded' => [ 'service' ]);
             $shell->fatal($result);
         } catch {
-            $self->log->error("Error while executing command, message: ", $result->{'msg'});
+            $self->log('base')->error("Error while executing command, message: ", $result->{'msg'});
             croak "Error while executing command, message: " . $result->{'msg'};
         };
         
@@ -419,7 +419,7 @@ sub dump_rmt {
     } catch {
         mkpath($location) if ! -d $location;
         my $error = $_ || 'unknown error';
-        $self->log->error("Error: ", $error);
+        $self->log('base')->error("Error: ", $error);
         die $error;
     }; # try
 
@@ -447,7 +447,7 @@ sub dump_rmt {
         $result = $shell->execCmd('cmd' => $startDb, 'cmdsNeeded' => [ 'mysqld_safe' ], 'bg' => 1);
         $shell->fatal($result);
     } catch {
-        $self->log->error("Error while executing command, message: ", $result->{'msg'});
+        $self->log('base')->error("Error while executing command, message: ", $result->{'msg'});
         croak "Error while executing command, message: " . $result->{'msg'};
     };
         
@@ -460,7 +460,7 @@ sub dump_rmt {
         if( -S $params{'socket'} ) {
             last;
         } elsif( $loop == $timeout ) {
-            $self->log->error("Failed to start mysql server!");
+            $self->log('base')->error("Failed to start mysql server!");
             croak "Failed to start mysql server!";
         } # if
         
@@ -500,7 +500,7 @@ sub dump_rmt {
             $result = $shell->execCmd('cmd' => $dumpDbCmd, 'cmdsNeeded' => [ 'mysqldump', $compUtil ]);
             $shell->fatal($result);
         } catch {
-            $self->log->error("Error: ", $result->{'msg'});
+            $self->log('base')->error("Error: ", $result->{'msg'});
             rmtree($dumpDbPath);
             $shell->fatal($result);
         }; # try
@@ -518,7 +518,7 @@ sub dump_rmt {
         $shell = Term::Shell->new();
         $result = $shell->execCmd('cmd' => $stopDbSafe, 'cmdsNeeded' => [ 'mysqladmin' ]);
     } catch {
-        $self->log->error("Error while executing command, message: ", $result->{'msg'});
+        $self->log('base')->error("Error while executing command, message: ", $result->{'msg'});
         croak "Error while executing command, message: " . $result->{'msg'};
     };
     
@@ -638,7 +638,7 @@ sub getBackupsInfo {
         @backupsInfo = @{ $dbh->selectall_arrayref($query, { Slice => {} }) };
     } catch {
         my $error = @_ || $_;
-        $self->log->error("Error: ", $error, " Query: " . $query);
+        $self->log('base')->error("Error: ", $error, " Query: " . $query);
         croak "Error: " . $error;
     }; # try
     
@@ -690,7 +690,7 @@ sub getRmtBackupsInfo {
         @backupsInfo = @{ $self->localDbh->selectall_arrayref($query, { Slice => {} }) };
     } catch {
         my $error = @_ || $_;
-        $self->log->error("Error: ", $error, " Query: " . $query);
+        $self->log('base')->error("Error: ", $error, " Query: " . $query);
         croak "Error: " . $error;
     };
     

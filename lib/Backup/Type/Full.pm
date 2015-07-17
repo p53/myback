@@ -70,7 +70,7 @@ sub backup {
     my $compUtil   = $self->{'compression'};
 
     if ( !( defined $params{'user'} && defined $params{'pass'} ) ) {
-        $self->log->error("You need to specify user, pass!");
+        $self->log('base')->error("You need to specify user, pass!");
         croak "You need to specify user, pass!";
     } # if
 
@@ -105,7 +105,7 @@ sub backup {
     }
     catch {
         File::Path::remove_tree( $bkpDir . "/" . $now );
-        $self->log->error( "Shell command failed! Message: ", $result->{'msg'} );
+        $self->log('base')->error( "Shell command failed! Message: ", $result->{'msg'} );
         croak "Shell command failed! Message: " . $result->{'msg'};
     }; # try
 
@@ -186,7 +186,7 @@ sub restore {
     my $bkpFile = $files[0];
 
     if ( !-f $bkpFile ) {
-        $self->log->error("Cannot find file with uuid $uuid!");
+        $self->log('base')->error("Cannot find file with uuid $uuid!");
         croak "Cannot find file with uuid $uuid!";
     }# if
 
@@ -203,7 +203,7 @@ sub restore {
         );
         $shell->fatal($result);
     } catch {
-        $self->log->error("Error while executing command, message: ", $result->{'msg'});
+        $self->log('base')->error("Error while executing command, message: ", $result->{'msg'});
         croak "Error while executing command, message: " . $result->{'msg'};
     };
     
@@ -219,7 +219,7 @@ sub restore {
         );
     }
     catch {
-        $self->log->error( "Error: ", $result->{'msg'} );
+        $self->log('base')->error( "Error: ", $result->{'msg'} );
         remove_tree($restoreLocation);
         $shell->fatal($result);
     }; # try
@@ -280,7 +280,7 @@ sub rmt_backup {
         $self->log('debug')->debug( "Result of command is: ", $result->{'msg'} );
         $shell->fatal($result);
     } catch {
-        $self->log->error("Error while executing command, message: ", $result->{'msg'});
+        $self->log('base')->error("Error while executing command, message: ", $result->{'msg'});
         croak "Error while executing command, message: " . $result->{'msg'};
     }; # try
 
@@ -296,7 +296,7 @@ sub rmt_backup {
         $result = $shell->execCmd('cmd' => $lastBkpInfoCmd, 'cmdsNeeded' => [ 'ssh' ]);
         $shell->fatal($result);
     } catch {
-        $self->log->error("Error while executing command, message: ", $result->{'msg'});
+        $self->log('base')->error("Error while executing command, message: ", $result->{'msg'});
         croak "Error while executing command, message: " . $result->{'msg'};
     }; # try
     
@@ -323,7 +323,7 @@ sub rmt_backup {
         $sth->execute();
     } catch {
         my $error = @_ || $_;
-        $self->log->error("Error: ", $error, " Query: " . $query);
+        $self->log('base')->error("Error: ", $error, " Query: " . $query);
         croak "Error: " . $error;
     };
     

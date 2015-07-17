@@ -97,7 +97,7 @@ sub add {
         $sth->execute();
     } catch {
         my $error = @_ || $_;
-        $self->log->error("Error: ", $error, " Query: " . $aliasCheckQuery);
+        $self->log('base')->error("Error: ", $error, " Query: " . $aliasCheckQuery);
         croak "Error: " . $error;
     }; # try
     
@@ -110,7 +110,7 @@ sub add {
     $self->log('debug')->debug("Dumping result: ", sub { Dumper(\@checkResult) } );
     
     if( $checkResult[0]->{'numAlias'} > 0 ) {
-        $self->log->error("Alias already present, alias: ", $alias);
+        $self->log('base')->error("Alias already present, alias: ", $alias);
         print "Alias already present, alias: " . $alias . "\n";
         exit;
     } # if
@@ -118,7 +118,7 @@ sub add {
     $self->log('base')->info('Checking if private key file is valid. file: ', $privKeyFile);
     
     if( ! -r $privKeyFile) {
-        $self->log->error("Private key file does not exist or is not readable! file: ", $privKeyFile);
+        $self->log('base')->error("Private key file does not exist or is not readable! file: ", $privKeyFile);
         croak "Private key file does not exist or is not readable! file: " . $privKeyFile;
     } # if
     
@@ -132,7 +132,7 @@ sub add {
         $sth->execute();
     } catch {
         my $error = @_ || $_;
-        $self->log->error("Error: ", $error, " Query: " . $hostCheckQuery);
+        $self->log('base')->error("Error: ", $error, " Query: " . $hostCheckQuery);
         croak "Error: " . $error;
     }; # try
     
@@ -177,7 +177,7 @@ sub add {
             $self->hashInsert('table' => 'bkpconf', 'data' => $bkpConfInsert);
         } catch {
             my $error = @_ || $_;
-            $self->log->error("Error: ", $error);
+            $self->log('base')->error("Error: ", $error);
             croak "Error: " . $error;
         }; # try
         
@@ -196,7 +196,7 @@ sub add {
             $self->hashInsert('table' => 'host', 'data' => $hostInsert);
         } catch {
             my $error = @_ || $_;
-            $self->log->error("Error: ", $error);
+            $self->log('base')->error("Error: ", $error);
             croak "Error: " . $error;
         }; # try
         
@@ -221,7 +221,7 @@ sub add {
             $self->hashInsert('table' => 'bkpconf', 'data' => $bkpConfInsert);
         } catch {
             my $error = @_ || $_;
-            $self->log->error("Error: ", $error);
+            $self->log('base')->error("Error: ", $error);
             croak "Error: " . $error;
         }; # try
     
@@ -267,7 +267,7 @@ sub delete {
             $sth->execute();
         } catch {
             my $error = @_ || $_;
-            $self->log->error("Error: ", $error, " Query: " . $delBkpConfQuery);
+            $self->log('base')->error("Error: ", $error, " Query: " . $delBkpConfQuery);
             croak "Error: " . $error;
         };
         
@@ -283,7 +283,7 @@ sub delete {
             $sth->execute();
         } catch {
             my $error = @_ || $_;
-            $self->log->error("Error: ", $error, " Query: " . $delHostQuery);
+            $self->log('base')->error("Error: ", $error, " Query: " . $delHostQuery);
             croak "Error: " . $error;
         };
         
@@ -301,7 +301,7 @@ sub delete {
             $sth->execute();
         } catch {
             my $error = @_ || $_;
-            $self->log->error("Error: ", $error, " Query: " . $delBkpConfQuery);
+            $self->log('base')->error("Error: ", $error, " Query: " . $delBkpConfQuery);
             croak "Error: " . $error;
         };
     
@@ -336,7 +336,7 @@ sub list {
         $sth->execute();
     } catch {
         my $error = @_ || $_;
-        $self->log->error("Error: ", $error, " Query: " . $listQuery);
+        $self->log('base')->error("Error: ", $error, " Query: " . $listQuery);
         croak "Error: " . $error;
     };   
     
