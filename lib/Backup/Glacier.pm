@@ -87,7 +87,9 @@ sub sync {
     my $j = Backup::Glacier::Journal->new(
                                       %journal_opts, 
                                       'journal_file' => $config->{'journal'}, 
-                                      'root_dir' => $bkpDir
+                                      'root_dir' => $bkpDir,
+                                      'debugLogger' => $self->log('debug'),
+                                      'infoLogger' => $self->log('base')
                                   );
 
     $self->log('base')->info("Syncing files to glacier");
@@ -107,29 +109,29 @@ sub sync {
             $j->open_for_write();
             
             if ($config->{new}) {
-                    my $itt = sub { 
-                        if (my $rec = shift @{ $j->{'listing'}{'new'} }) {
-                                my $absfilename = $j->absfilename($rec->{'relfilename'});
-                                my $relfilename = $rec->{'relfilename'};
-                                my $size = stat($absfilename)->size;
-                                my $partSize = $self->calcPartSize('size' => $size);
-                                App::MtAws::QueueJob::Upload->new(
-                                    'filename' => $absfilename, 
-                                    'relfilename' => $relfilename, 
-                                    'partsize' => $partSize, 
-                                    'delete_after_upload' => 0
-                                );
-                        } else {
-                                return;
-                        } # if
-                    };
-                    push @joblist, App::MtAws::QueueJob::Iterator->new(iterator => $itt);
+                my $itt = sub { 
+                    if (my $rec = shift @{ $j->{'listing'}{'new'} }) {
+                        my $absfilename = $j->absfilename($rec->{'relfilename'});
+                        my $relfilename = $rec->{'relfilename'};
+                        my $size = stat($absfilename)->size;
+                        my $partSize = $self->calcPartSize('size' => $size);
+                        App::MtAws::QueueJob::Upload->new(
+                            'filename' => $absfilename, 
+                            'relfilename' => $relfilename, 
+                            'partsize' => $partSize, 
+                            'delete_after_upload' => 0
+                        );
+                    } else {
+                            return;
+                    } # if
+                };
+                push @joblist, App::MtAws::QueueJob::Iterator->new(iterator => $itt);
             } # if
 
             if (scalar @joblist) {
                     my $lt = do {
-                            confess unless @joblist >= 1;
-                            App::MtAws::QueueJob::Iterator->new(iterator => sub { shift @joblist });
+                        confess unless @joblist >= 1;
+                        App::MtAws::QueueJob::Iterator->new(iterator => sub { shift @joblist });
                     };
                     my ($R) = fork_engine->{parent_worker}->process_task($lt, $j);
                     confess unless $R;
@@ -179,7 +181,9 @@ sub list {
     my $j = Backup::Glacier::Journal->new(
                                       %journal_opts, 
                                       'journal_file' => $config->{'journal'}, 
-                                      'root_dir' => $bkpDir
+                                      'root_dir' => $bkpDir,
+                                      'debugLogger' => $self->log('debug'),
+                                      'infoLogger' => $self->log('base')
                                   );
       
     $j->read_journal('should_exist' => 0);
@@ -238,7 +242,9 @@ sub clean {
     my $j = Backup::Glacier::Journal->new(
                                       %journal_opts, 
                                       'journal_file' => $config->{'journal'}, 
-                                      'root_dir' => $bkpDir
+                                      'root_dir' => $bkpDir,
+                                      'debugLogger' => $self->log('debug'),
+                                      'infoLogger' => $self->log('base')
                                   );
                                   
     my $now = DateTime->now();
@@ -283,11 +289,11 @@ sub clean {
         
         $self->log('debug')->debug("Files found: ", sub { Dumper(\@files) });
         
-        my $deletedQuery = "SELECT history_id FROM journal";
+        my $deletedQuery = "SELECT glacier_id FROM journal";
         $deletedQuery .= " WHERE type='DELETED'";
 
         my $glcQuery = "SELECT COUNT(journal_id) AS rec_count FROM journal WHERE";
-        $glcQuery .= " history_id NOT IN (" . $deletedQuery . ") AND type='CREATED'";
+        $glcQuery .= " glacier_id NOT IN (" . $deletedQuery . ") AND type='CREATED'";
         $glcQuery .= " AND relfilename LIKE '%" . $localBackup->{'uuid'}. "%'";
         
         my $delQuery = "DELETE FROM history WHERE uuid='" . $localBackup->{'uuid'}. "'";
@@ -403,7 +409,9 @@ sub clean_rmt {
     my $j = Backup::Glacier::Journal->new(
                                       %journal_opts, 
                                       'journal_file' => $config->{'journal'}, 
-                                      'root_dir' => $bkpDir
+                                      'root_dir' => $bkpDir,
+                                      'debugLogger' => $self->log('debug'),
+                                      'infoLogger' => $self->log('base')
                                   );
                                   
     my $now = DateTime->now();
@@ -412,12 +420,12 @@ sub clean_rmt {
     
     $self->log('base')->info("Selecting old files from history");
     
-    my $deletedQuery = "SELECT history_id FROM journal";
+    my $deletedQuery = "SELECT glacier_id FROM journal";
     $deletedQuery .= " WHERE type='DELETED'";
 
-    my $glcQuery = "SELECT glacier.history_id AS hist_id, * FROM journal JOIN glacier ON";
-    $glcQuery .= " journal.history_id = glacier.history_id WHERE";
-    $glcQuery .= " journal.history_id NOT IN (" . $deletedQuery . ") AND type='CREATED'";
+    my $glcQuery = "SELECT glacier.glacier_id AS glc_id, * FROM journal JOIN glacier ON";
+    $glcQuery .= " journal.glacier_id = glacier.glacier_id WHERE";
+    $glcQuery .= " journal.glacier_id NOT IN (" . $deletedQuery . ") AND type='CREATED'";
     $glcQuery .= " AND glacier.start_time < DATETIME(" . $cleanTime->epoch . ", 'unixepoch')";
     
     $self->log('debug')->debug("Query: ", $glcQuery);
@@ -440,7 +448,7 @@ sub clean_rmt {
     
         $j->open_for_write();
 
-        my @deleteFiles = map { $_->{'hist_id'} } @glcBackups;
+        my @deleteFiles = map { $_->{'glc_id'} } @glcBackups;
 
         my @filelist = map { 
                                 {
@@ -476,7 +484,7 @@ sub clean_rmt {
         
         $self->log('base')->info("Deleting entries from glacier history");
 
-        my $deleteQuery = "DELETE FROM glacier WHERE history_id IN";
+        my $deleteQuery = "DELETE FROM glacier WHERE glacier_id IN";
         $deleteQuery .= " (" . join(',', @deleteFiles) . ")";
         
         try {
@@ -531,7 +539,9 @@ sub get {
     my $j = Backup::Glacier::Journal->new(
                                       %journal_opts, 
                                       'journal_file' => $config->{'journal'}, 
-                                      'root_dir' => $bkpDir
+                                      'root_dir' => $bkpDir,
+                                      'debugLogger' => $self->log('debug'),
+                                      'infoLogger' => $self->log('base')
                                   );
 
     $self->log('base')->info("Getting info about restored backup with uuid: " . $uuid);
@@ -717,7 +727,9 @@ sub clean_journal {
     my $j = Backup::Glacier::Journal->new(
                                       %journal_opts, 
                                       'journal_file' => $config->{'journal'}, 
-                                      'root_dir' => $bkpDir
+                                      'root_dir' => $bkpDir,
+                                      'debugLogger' => $self->log('debug'),
+                                      'infoLogger' => $self->log('base')
                                   );
                                   
     my $now = DateTime->now();
@@ -730,7 +742,7 @@ sub clean_journal {
     # and they are not present in glacier history table
     my $subQuery = "SELECT archive_id FROM journal WHERE";
     $subQuery .= " journal.time < " . $cleanTime->epoch . " AND type='DELETED'";
-    $subQuery .= " AND history_id NOT IN (SELECT history_id FROM glacier)";
+    $subQuery .= " AND glacier_id NOT IN (SELECT glacier_id FROM glacier)";
     $subQuery .= " GROUP BY archive_id";
     
     my $query = "SELECT * FROM journal WHERE archive_id IN (" . $subQuery . ")";
@@ -895,12 +907,12 @@ sub getGlacierBackupsInfo {
 
     $self->log('debug')->debug("Getting remote backups info with params: ", , sub { Dumper(\%params) });
    
-    my $deletedQuery = "SELECT journal.history_id FROM journal";
+    my $deletedQuery = "SELECT journal.glacier_id FROM journal";
     $deletedQuery .= " WHERE type='DELETED'";
     
     my $getQuery = "SELECT * FROM journal JOIN glacier ON";
-    $getQuery .= " journal.history_id = glacier.history_id WHERE";
-    $getQuery .= " journal.history_id NOT IN (" . $deletedQuery . ") AND type='CREATED'";
+    $getQuery .= " journal.glacier_id = glacier.glacier_id WHERE";
+    $getQuery .= " journal.glacier_id NOT IN (" . $deletedQuery . ") AND type='CREATED'";
     
     if( $uuid ) {
         $getQuery .= " AND glacier.uuid='" . $uuid . "'";

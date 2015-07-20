@@ -58,7 +58,15 @@ return:
 sub new {
 
     my $class = shift;
-    my $self = $class->SUPER::new(@_);
+    my %params = @_;
+    $debugLogger = $params{'debugLogger'};
+    $infoLogger = $params{'infoLogger'};
+    delete $params{'debugLogger'};
+    delete $params{'infoLogger'};
+    
+    my $self = $class->SUPER::new(%params);
+    $self->{'debugLogger'} = $debugLogger;
+    $self->{'infoLogger'} = $infoLogger;
     
     $self->{'dbh'} = DBI->connect(
                     "dbi:SQLite:dbname=" . $self->{'journal_file'},
@@ -102,20 +110,28 @@ sub read_journal {
         my @glcBkpsPresent = ();
         my @glcRetrieveJobs = ();
 
-        my $deletedQuery = "SELECT journal.history_id FROM journal";
+        $self->{'debugLogger'}->debug("Reading journal not delete entries from database");
+        
+        my $deletedQuery = "SELECT journal.glacier_id FROM journal";
         $deletedQuery .= " WHERE type='DELETED'";
 
         my $query = "SELECT * FROM journal JOIN glacier ON";
-        $query .= " journal.history_id = glacier.history_id WHERE";
-        $query .= " journal.history_id NOT IN (" . $deletedQuery . ")";
+        $query .= " journal.glacier_id = glacier.glacier_id WHERE";
+        $query .= " journal.glacier_id NOT IN (" . $deletedQuery . ")";
         $query .= " AND type='CREATED' ORDER BY mtime ASC";
 
+        $self->{'debugLogger'}->debug('Query: ', $query);
+        
         try {
             @glcBkpsPresent = @{ $self->{'dbh'}->selectall_arrayref($query, { Slice => {} }) };
         } catch {
-            confess @_ || $_;
+            my $error = @_ || $_;
+            $self->{'infoLogger'}->error("Error: ", $error);
+            croak "Error: " . $error;
         };
 
+        $self->{'debugLogger'}->debug("Dumping all notdelete journal entries", sub { Dumper(\@glcBkpsPresent)});
+        
         $self->{'archive_sorted'} = \@glcBkpsPresent;
 
         for my $glcBkpPresent(@glcBkpsPresent) {
@@ -131,14 +147,20 @@ sub read_journal {
 
         } # for
 
+        $self->{'debugLogger'}->debug("Reading journal retrieve entries from database");
+        
         my $retrieveQuery = "SELECT * FROM journal WHERE type='RETRIEVE_JOB'";
 
         try {
             @glcRetrieveJobs = @{ $self->{'dbh'}->selectall_arrayref($retrieveQuery, { Slice => {} }) };
         } catch {
-            confess @_ || $_;
+            my $error = @_ || $_;
+            $self->{'infoLogger'}->error("Error: ", $error);
+            croak "Error: " . $error;
         };
 
+        $self->{'debugLogger'}->debug("Dumping retrieve entries", sub { Dumper(\@glcRetrieveJobs)});
+        
         for my $job(@glcRetrieveJobs) {
 
             $self->_retrieve_job(
@@ -200,64 +222,115 @@ sub add_entry {
     if ($e->{type} eq 'CREATED') {
     
         #" CREATED $archive_id $data->{filesize} $data->{final_hash} $data->{relfilename}"
-        defined( $e->{$_} ) || confess "bad $_" for (qw/time archive_id size treehash relfilename/);
-        confess "invalid filename" unless is_relative_filename($e->{relfilename});
+        for my $field (qw/time archive_id size treehash relfilename/) {
+            if( !defined( $e->{$field} ) ) {
+                $self->{'infoLogger'}->debug("Bad $field");
+                confess "bad $field";
+            } # if
+        } # for
+        
+        if(! is_relative_filename($e->{relfilename}) ) {
+            $self->{'infoLogger'}->debug("Invalid filename. file: " . $e->{'relfilename'});
+            confess "invalid filename";
+        } # if
         
         my $mtime = defined($e->{mtime}) ? $e->{mtime} : 'NONE';
     
         my $file = fileparse($e->{'relfilename'}, '.xb.*');
+                
+        $self->{'debugLogger'}->debug('Selecting history records for uuid: ', $file);
         
         my $query = "SELECT * FROM history WHERE uuid='" . $file . "'";
+        
+        $self->{'debugLogger'}->debug('Query: ', $query);
+        
         my @historyRecs = @{ $self->{'dbh'}->selectall_arrayref($query, { Slice => {} }) };
 
+        $self->{'debugLogger'}->debug('Dumping results: ', sub{ Dumper(\@historyRecs) });
+        
         if( scalar(@historyRecs) > 1 ) {
+            $self->{'debugLogger'}->debug("There is more than one record for uuid: " . $file);
             croak "There is more than one record for uuid: " . $file;
         } # if
         
         if( scalar(@historyRecs) > 1) {
+            $self->{'debugLogger'}->debug("There is no record in history for uuid: " . $file);
             croak "There is no record in history for uuid: " . $file;
         } # if
         
         $self->hashInsert('table' => 'glacier', 'data' => $historyRecs[0]);
         
+        my $glacId = $self->{'dbh'}->last_insert_id("", "", "host", "");
+        
         $e->{'history_id'} = $historyRecs[0]->{'history_id'};
+        $e->{'glacier_id'} = $glacId;
         
         $self->hashInsert('table' => 'journal', 'data' => $e);
         
         #$self->_write_line("B\t$e->{time}\tCREATED\t$e->{archive_id}\t$e->{size}\t$mtime\t$e->{treehash}\t$e->{relfilename}");
     } elsif ($e->{type} eq 'DELETED') {
-        #  DELETED $data->{archive_id} $data->{relfilename}
-        defined( $e->{$_} ) || confess "bad $_" for (qw/archive_id relfilename/);
-        confess "invalid filename" unless is_relative_filename($e->{relfilename});
+        #  DELETED $data->{archive_id} $data->{relfilename}     
+        for my $field (qw/archive_id relfilename/) {
+            if( !defined( $e->{$field} ) ) {
+                $self->{'infoLogger'}->debug("Bad $field");
+                confess "bad $field";
+            } # if
+        } # for
+        
+        if(! is_relative_filename($e->{relfilename}) ) {
+            $self->{'infoLogger'}->debug("Invalid filename. file: " . $e->{'relfilename'});
+            confess "invalid filename";
+        } # if
 
         my $file = fileparse($e->{'relfilename'}, '.xb.*');
         
-        my $query = "SELECT glacier.history_id FROM glacier JOIN journal ON";
-        $query .= " glacier.history_id=journal.history_id";
+        $self->{'debugLogger'}->debug("Selecting all glacier, history id's for archive_id: " . $e->{'archive_id'});
+        
+        my $query = "SELECT glacier.glacier_id, glacier.history_id FROM glacier JOIN journal ON";
+        $query .= " glacier.glacier_id=journal.glacier_id";
         $query .= " WHERE archive_id='" . $e->{'archive_id'} . "'";
+        
+        $self->{'debugLogger'}->debug('Query: ', $query);
+        
         my @historyRecs = @{ $self->{'dbh'}->selectall_arrayref($query, { Slice => {} }) };
         
+        $self->{'debugLogger'}->debug("Dumping results: ", sub{ Dumper(\@historyRecs) });
+        
         $e->{'history_id'} = $historyRecs[0]->{'history_id'};
+        $e->{'glacier_id'} = $historyRecs[0]->{'glacier_id'};
         
         $self->hashInsert('table' => 'journal', 'data' => $e);
         
         #$self->_write_line("B\t$e->{time}\tDELETED\t$e->{archive_id}\t$e->{relfilename}");
     } elsif ($e->{type} eq 'RETRIEVE_JOB') {
         #  RETRIEVE_JOB $data->{archive_id}
-        defined( $e->{$_} ) || confess "bad $_" for (qw/archive_id job_id/);
+        for my $field (qw/archive_id job_id/) {
+            if( !defined( $e->{$field} ) ) {
+                $self->{'infoLogger'}->debug("Bad $field");
+                confess "bad $field";
+            } # if
+        } # for
         
-        my $query = "SELECT glacier.history_id FROM glacier JOIN journal ON";
-        $query .= " glacier.history_id=journal.history_id";
+        my $query = "SELECT glacier.glacier_id, glacier.history_id FROM glacier JOIN journal ON";
+        $query .= " glacier.glacier_id=journal.glacier_id";
         $query .= " WHERE archive_id='" . $e->{'archive_id'} . "'";
+       
+        $self->{'debugLogger'}->debug('Query: ', $query);
+        
         my @journalRecs = @{ $self->{'dbh'}->selectall_arrayref($query, { Slice => {} }) };
         
+        $self->{'debugLogger'}->debug("Dumping results: ", sub{ Dumper(\@journalRecs) });
+        
         $e->{'history_id'} = $journalRecs[0]->{'history_id'};
+        $e->{'glacier_id'} = $journalRecs[0]->{'glacier_id'};
         
         $self->hashInsert('table' => 'journal', 'data' => $e);
         
         #$self->_write_line("B\t$e->{time}\tRETRIEVE_JOB\t$e->{archive_id}\t$e->{job_id}");
     } else {
-        confess "Unexpected else";
+        my $error = @_ || $_;
+        $self->{'infoLogger'}->error("Error: ", $error);
+        croak "Error: " . $error;
     } # if
         
 } # end sub add_entry
@@ -293,9 +366,17 @@ sub hashInsert {
     my $query = "INSERT INTO " . $table . " (" . join( ",", keys(%$data) ) . ")";
     $query .= " VALUES(" . join( ",", @escVals ) . ")";
 
-    my $sth = $self->{'dbh'}->prepare($query);
-    $sth->execute();
-        
+    $self->{'debugLogger'}->debug("Query: ", $query);
+    
+    try {
+        my $sth = $self->{'dbh'}->prepare($query);
+        $sth->execute();
+    } catch {
+        my $error = @_ || $_;
+        $self->{'infoLogger'}->error("Error: ", $error);
+        croak "Error: " . $error;
+    }; # try
+    
 } # end sub hashInsert
 
 =item C<DESTROY>
