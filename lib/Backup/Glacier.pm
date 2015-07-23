@@ -1008,7 +1008,8 @@ sub calcPartSize {
     my $fileSize = $params{'size'};
     # max file size able to upload in glacier is 4Gx10000
     my $maxSize = 40 * 1024 * 1024 * 1024 * 1024;
-    my $maxPartSize = 4 * 1024;
+    my $maxPartSize = 4 * 1024 * 1024 * 1024;
+    my $finalPartSize = 0;
     
     if( $fileSize > $maxSize ) {
         $self->log('base')->error("File size is bigger than max size: ", $maxSize);
@@ -1017,13 +1018,18 @@ sub calcPartSize {
     
     my $percent = $fileSize * 100 / $maxSize;
     my $partSize = $percent * $maxPartSize;
+
+    $partSizeBin = sprintf("%b", ceil($partSize));
+    my $binNumLength = length($partSizeBin);
     
-    # we use ceil because it must be integer
-    my $ceiledPartSize = ceil($partSize);
-    my $sqRoot = sqrt($ceiledPartSize);
-    my $sqRootFloor = floor($sqRoot);
+    my $zeros = "0" x ($binNumLength - 1);
+    my $partSizeMax = oct("0b1" . $zeros . "0");
     
-    my $finalPartSize = ($sqRootFloor**2) * 1024 * 1024;
+    if( $partSizeMax >= $maxPartSize ) {
+        $finalPartSize = $maxPartSize;
+    } else {
+        $finalPartSize = $partSizeMax;
+    } # if
     
     return $finalPartSize;
     
