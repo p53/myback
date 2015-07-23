@@ -1019,7 +1019,7 @@ sub calcPartSize {
     my $percent = $fileSize * 100 / $maxSize;
     my $partSize = $percent * $maxPartSize;
 
-    $partSizeBin = sprintf("%b", ceil($partSize));
+    my $partSizeBin = sprintf("%b", ceil($partSize));
     my $binNumLength = length($partSizeBin);
     
     my $zeros = "0" x ($binNumLength - 1);
