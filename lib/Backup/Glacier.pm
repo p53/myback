@@ -1019,9 +1019,13 @@ sub calcPartSize {
     my $partSize = $percent * $maxPartSize;
     
     # we use ceil because it must be integer
-    my $ceiledPartSize = ceil($partSize) * 1024 * 1024;
+    my $ceiledPartSize = ceil($partSize);
+    my $sqRoot = sqrt($ceiledPartSize);
+    my $sqRootFloor = floor($sqRoot);
     
-    return $ceiledPartSize;
+    my $finalPartSize = ($sqRootFloor**2) * 1024 * 1024;
+    
+    return $finalPartSize;
     
 } # end sub calcPartSize
 
