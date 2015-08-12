@@ -43,6 +43,8 @@ use App::MtAws;
 
 use Term::Shell;
 use Backup::Glacier::Journal;
+use Backup::Type::Full;
+use Backup::Type::Incremental;
 
 with 'Backup::BackupInterface',
      'MooseX::Log::Log4perl';
@@ -114,7 +116,7 @@ sub sync {
                         my $absfilename = $j->absfilename($rec->{'relfilename'});
                         my $relfilename = $rec->{'relfilename'};
                         my $size = stat($absfilename)->size;
-                        my $partSize = $self->calcPartSize('size' => $size);
+                        my $partSize = $self->calcPartSize('size' => $size, 'config' => $config);
                         App::MtAws::QueueJob::Upload->new(
                             'filename' => $absfilename, 
                             'relfilename' => $relfilename, 
@@ -532,7 +534,8 @@ sub get {
     my $uuid = $params{'uuid'};
     my $config = $params{'config'};
     my $bkpDir = $params{'bkpDir'};
-    my $location = $params{'location'};
+    my $location = $params{'location'} . '/get';
+    my $origLoc = $params{'location'};
     my $chain = [];        
     my %journal_opts = ( 'journal_encoding' => 'UTF-8' );
     
@@ -566,10 +569,10 @@ sub get {
                                         'uuid' => $uuid
                                     );
         
+    } else {
+        push(@$chain, $backups->[0]);
     } # if
     
-    push(@$chain, $backups->[0]);
-
     $self->log('debug')->debug("Dumping backup chain info: ", sub { Dumper($chain) });
     
     # for each backup we need to create folder
@@ -679,6 +682,25 @@ sub get {
         croak "Timeout for download " . $downloadTimeout . " expired!";
         
     } # while
+    
+    $self->log('base')->info("Starting restore from downloaded archives");
+    
+    if( $backups->[0]->{'incremental'} eq 'Y' ) {
+        my %restParams = %params;
+        $restParams{'hostBkpDir'} = $location . '/*';
+        $restParams{'chain'} = \@backupChain;
+        $restParams{'location'} = $origLoc . '/restore';
+        my $incrBkpObj = Backup::Type::Incremental->new();
+        $incrBkpObj->restore_common(%restParams);
+    } else {
+        my %restParams = %params;
+        $restParams{'hostBkpDir'} = $location . '/*';
+        $restParams{'location'} = $origLoc . '/restore';
+        my $fullBkpObj = Backup::Type::Full->new();
+        $fullBkpObj->restore(%restParams);
+    } # if
+    
+    $self->log('base')->info("Restore completed!");
     
 } # end sub get
 
@@ -955,9 +977,12 @@ sub getGlacierBackupChain {
     my $histIdQuery = "SELECT parent_id FROM glacier WHERE uuid='" . $uuid . "'";
     my $timeQuery = "SELECT start_time FROM glacier WHERE uuid='" . $uuid . "'";
     
-    my $query = "SELECT * FROM glacier WHERE history_id IN";
+    my $query = "SELECT * FROM journal JOIN glacier ON journal.glacier_id = glacier.glacier_id";
+    $query .= " WHERE journal.glacier_id NOT IN";
+    $query .= " (SELECT journal.glacier_id FROM journal WHERE type='DELETED')";
+    $query .= " AND type='CREATED' AND (glacier.history_id IN";
     $query .= " (" . $histIdQuery . ") OR parent_id IN (" . $histIdQuery . ")";
-    $query .= " AND start_time <= (" . $timeQuery . ")";
+    $query .= " AND start_time <= (" . $timeQuery . "))";
     $query .= " ORDER BY innodb_to_lsn ASC, start_time ASC";
     
     $self->log('debug')->debug("Query: ", $query);
@@ -1006,6 +1031,19 @@ sub calcPartSize {
     my $self = shift;
     my %params = @_;
     my $fileSize = $params{'size'};
+    my $config = $params{'config'};
+    
+    if( ! defined $config->{'memorycap'} ) {
+        $self->log('base')->error("Glacier needs memorycap to be defined in config!");
+        croak "Glacier needs memorycap to be defined in config!";
+    } # if
+       
+    my $capMaxPart = $config->{'memorycap'} / $config->{'concurrency'};
+    my $capBinMaxPart = sprintf("%b", $capMaxPart);
+    my $binNumLength = length($capBinMaxPart);
+    my $zeros = "0" x ($binNumLength - 1);
+    my $capMinPart= oct("0b1" . $zeros);
+    
     # max file size able to upload in glacier is 4Gx10000
     my $maxSize = 40 * 1024 * 1024 * 1024 * 1024;
     my $maxPartSize = 4 * 1024 * 1024 * 1024;
@@ -1016,19 +1054,13 @@ sub calcPartSize {
         croak "File size is bigger than max size: " . $maxSize;
     } # if
     
-    my $percent = $fileSize * 100 / $maxSize;
-    my $partSize = $percent * $maxPartSize;
+    my $numFilesCapMinPart = $fileSize / $capMinPart;
 
-    my $partSizeBin = sprintf("%b", ceil($partSize));
-    my $binNumLength = length($partSizeBin);
-    
-    my $zeros = "0" x ($binNumLength - 1);
-    my $partSizeMax = oct("0b1" . $zeros . "0");
-    
-    if( $partSizeMax >= $maxPartSize ) {
-        $finalPartSize = $maxPartSize;
+    if( $numFilesCapMinPart > 10000 ) {
+        $self->log('base')->error("Cannot upload file with this memory cap, too low memory for big file/part size!");
+        croak "Cannot upload file with this memory cap, too low memory for big file!";
     } else {
-        $finalPartSize = $partSizeMax;
+        $finalPartSize = $capMinPart;
     } # if
     
     return $finalPartSize;
