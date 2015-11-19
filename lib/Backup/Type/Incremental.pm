@@ -275,6 +275,8 @@ sub restore_common {
     # we apply each incremental backup from oldest to newest on full backup
     my $restoreIncrCmd = "innobackupex --apply-log --redo-only " . $restoreLocation . " --incremental-dir=";
 
+    $restoreIncrCmd .= $tmpRestoreLoc;
+            
     for my $prevBkp(@$chain) {
 
         my @files = glob($params{'hostBkpDir'} . "/*/" . $prevBkp->{'uuid'} . ".xb." . $compSuffix);
@@ -298,8 +300,6 @@ sub restore_common {
         }; # try
     
         $self->log('base')->info("Incremental backup in dir $1 and uuid " . $prevBkp->{'uuid'});
-
-        $restoreIncrCmd .= $tmpRestoreLoc;
         
         try{
             $result = $shell->execCmd('cmd' => $restoreIncrCmd, 'cmdsNeeded' => [ 'innobackupex' ]);
